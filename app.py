@@ -31,7 +31,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # ==================== 纯原生：多用户与审核系统 ====================
-USER_DB_FILE = "users_db.json"
+USER_DB_FILE = "users_db_2.json"
 
 def hash_password(password):
     """简单的密码加密，防止明文泄露"""
