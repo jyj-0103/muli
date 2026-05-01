@@ -5,6 +5,7 @@ import os
 import joblib
 import json
 import hashlib
+import urllib.request
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
@@ -18,7 +19,7 @@ from sklearn.metrics import mean_absolute_error
 
 warnings.filterwarnings('ignore')
 
-# ==================== 页面全局配置 ====================
+# ==================== 1. 页面全局配置 (必须放在最前面) ====================
 st.set_page_config(page_title="智能配色系统 Pro", page_icon="🎨", layout="wide")
 
 st.markdown("""
@@ -30,8 +31,30 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==================== 纯原生：多用户与审核系统 ====================
-USER_DB_FILE = "users_db_2.json"
+# ==================== 2. 自动拉取 250MB 大模型 ====================
+MODEL_FILE_PATH = "smart_color_models.pkl"
+DATA_FILE_PATH = "processed_2.xlsx"
+
+# ⚠️ 必须把这行替换为你自己 GitHub Releases 里真实存在的下载链接 ⚠️
+MODEL_DOWNLOAD_URL = "https://github.com/jyj-0103/muli/releases/download/v1.0/smart_color_models.pkl"
+
+@st.cache_resource
+def ensure_model_exists():
+    """如果云端服务器没有模型文件，就自动从 Releases 下载"""
+    if not os.path.exists(MODEL_FILE_PATH):
+        with st.spinner("🚀 首次启动系统，正在从云端拉取 AI 大模型 (约 250MB)，这可能需要 1~2 分钟，请耐心等待..."):
+            try:
+                urllib.request.urlretrieve(MODEL_DOWNLOAD_URL, MODEL_FILE_PATH)
+                st.success("✅ 大模型拉取成功！系统准备就绪。")
+            except Exception as e:
+                st.error(f"❌ 下载模型失败，请检查链接是否正确或仓库是否为Public: {e}")
+                st.stop()
+
+# 执行下载检查
+ensure_model_exists()
+
+# ==================== 3. 纯原生：多用户与审核系统 ====================
+USER_DB_FILE = "users_db.json"
 
 def hash_password(password):
     """简单的密码加密，防止明文泄露"""
@@ -64,8 +87,6 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
     st.session_state["is_admin"] = False
-if "auth_mode" not in st.session_state:
-    st.session_state["auth_mode"] = "login"  # 'login' 或 'register'
 
 def render_auth_page():
     """渲染登录或注册界面"""
@@ -76,8 +97,6 @@ def render_auth_page():
     with col2:
         with st.container(border=True):
             users_db = load_users()
-            
-            # 切换标签
             mode_selection = st.radio("请选择操作", ["🔑 账号登录", "📝 申请注册"], horizontal=True, label_visibility="collapsed")
             st.write("")
             
@@ -118,7 +137,7 @@ def render_auth_page():
                         users_db[new_user] = {
                             "password": hash_password(new_pwd),
                             "is_admin": False,
-                            "is_approved": False  # 关键：新注册默认未审核
+                            "is_approved": False
                         }
                         save_users(users_db)
                         st.success(f"🎉 账号 [{new_user}] 注册成功！请等待管理员审批后登录。")
@@ -128,50 +147,7 @@ if not st.session_state["logged_in"]:
     render_auth_page()
     st.stop()
 
-# ==================== 登录成功后：系统正式内容 ====================
-
-MODEL_FILE_PATH = "smart_color_models.pkl"
-DATA_FILE_PATH = "processed_2.xlsx"
-
-# ----------------- 侧边栏：通用菜单 & 管理员审核面板 -----------------
-with st.sidebar:
-    st.success(f"👤 欢迎回来：**{st.session_state['username']}**")
-    if st.button("🚪 退出登录", use_container_width=True):
-        st.session_state["logged_in"] = False
-        st.session_state["username"] = ""
-        st.session_state["is_admin"] = False
-        st.rerun()
-        
-    # 如果是管理员，显示专属审核面板
-    if st.session_state["is_admin"]:
-        st.markdown("---")
-        st.markdown("### 👑 管理员控制台")
-        with st.container(border=True):
-            users_db = load_users()
-            # 筛选未审核的账号
-            pending_users = [u for u, d in users_db.items() if not d.get("is_approved", False)]
-            
-            if not pending_users:
-                st.info("✅ 当前无待审核账号")
-            else:
-                st.warning(f"🔔 有 {len(pending_users)} 个新账号等待批准")
-                for pu in pending_users:
-                    col_a, col_b = st.columns([2, 1])
-                    with col_a: st.write(f"**{pu}**")
-                    with col_b:
-                        if st.button("批准", key=f"btn_{pu}", type="primary"):
-                            users_db[pu]["is_approved"] = True
-                            save_users(users_db)
-                            st.rerun()
-                            
-    st.markdown("---")
-    st.image("https://cdn-icons-png.flaticon.com/512/3003/3003054.png", width=60)
-    st.header("⚙️ 模型初始化设置")
-    
-    # 这里的函数需要在前面定义，所以我们稍后会在下面进行模型相关函数的声明
-    # 但 UI 按钮可以先占位，使用回调或之后运行
-    
-# ==================== 辅助函数与模型逻辑 ====================
+# ==================== 4. 辅助函数与模型逻辑 ====================
 def safe_float(val):
     if pd.isna(val): return 0.0
     try: return float(val)
@@ -582,19 +558,56 @@ def recommend_single(target_depth, target_red_blue, target_yellow_green, k=3, co
     results.sort(key=lambda x: x['color_distance'])
     return results
 
-# ==================== 继续侧边栏的模型加载 UI ====================
+# ==================== 5. 侧边栏：控制台与模型加载 ====================
 with st.sidebar:
+    st.success(f"👤 欢迎回来：**{st.session_state['username']}**")
+    if st.button("🚪 退出登录", use_container_width=True):
+        st.session_state["logged_in"] = False
+        st.session_state["username"] = ""
+        st.session_state["is_admin"] = False
+        st.rerun()
+        
+    # 如果是管理员，显示专属审核面板
+    if st.session_state["is_admin"]:
+        st.markdown("---")
+        st.markdown("### 👑 管理员控制台")
+        with st.container(border=True):
+            users_db = load_users()
+            pending_users = [u for u, d in users_db.items() if not d.get("is_approved", False)]
+            
+            if not pending_users:
+                st.info("✅ 当前无待审核账号")
+            else:
+                st.warning(f"🔔 有 {len(pending_users)} 个新账号等待批准")
+                for pu in pending_users:
+                    col_a, col_b = st.columns([2, 1])
+                    with col_a: st.write(f"**{pu}**")
+                    with col_b:
+                        if st.button("批准", key=f"btn_{pu}", type="primary"):
+                            users_db[pu]["is_approved"] = True
+                            save_users(users_db)
+                            st.rerun()
+                            
+    st.markdown("---")
+    st.image("https://cdn-icons-png.flaticon.com/512/3003/3003054.png", width=60)
+    st.header("⚙️ 模型初始化设置")
+    
     with st.container(border=True):
+        # 所有人可见：加载模型
         if st.button("📂 加载已保存模型", use_container_width=True):
             with st.spinner("正在加载模型..."):
                 success, msg = load_models()
                 if success: st.success(msg)
                 else: st.error(msg)
-        if st.button("🚀 重新训练并保存模型", type="secondary", use_container_width=True):
-            with st.spinner("正在重新训练..."):
-                success, msg = train_and_save_models()
-                if success: st.success(msg)
-                else: st.error(msg)
+                
+        # 仅管理员可见：重新训练模型
+        if st.session_state["is_admin"]:
+            if st.button("🚀 重新训练并保存模型", type="secondary", use_container_width=True):
+                with st.spinner("正在重新训练..."):
+                    success, msg = train_and_save_models()
+                    if success: st.success(msg)
+                    else: st.error(msg)
+
     st.markdown("---")
     if ms['is_loaded']:
         st.success("🟢 模型就绪")
@@ -602,10 +615,10 @@ with st.sidebar:
     else: st.warning("🔴 模型未加载")
 
 if not ms['is_loaded']:
-    st.info("👈 请先在左侧加载或训练模型。")
+    st.info("👈 请先在左侧点击【加载已保存模型】。")
     st.stop()
 
-# ==================== 主界面业务 Tabs ====================
+# ==================== 6. 主界面业务 Tabs ====================
 tab1, tab2, tab3, tab4 = st.tabs([
     "💡 方案大厅 (智能推荐)", 
     "🔬 调色实验室 (配方微调)", 
@@ -819,7 +832,7 @@ with tab3:
 
 # ================= Tab 4: 色值正向预测 =================
 with tab4:
-    st.markdown("### 已知底料和配料参数，正向预测它的实际呈现色值(底料应是2kg)")
+    st.markdown("### 已知底料和配料参数，正向预测它的实际呈现色值")
     with st.container(border=True):
         base_str4 = st.text_input("📦 请输入底料 (如: 三色:1475, 中灰:525)", placeholder="必填，用逗号隔开", key="t4_base")
         add_str4 = st.text_input("🧪 请输入配料 (如: R03:0.15, 9010:20)", placeholder="如果没有配料，可留空", key="t4_add")
