@@ -1,0 +1,196 @@
+import streamlit as st
+import pandas as pd
+from io import BytesIO
+from datetime import datetime
+import os
+
+# ==================== 1. 页面配置与样式 ====================
+st.set_page_config(page_title="配色数据录入系统", page_icon="📝", layout="wide")
+
+# 隐藏右上角菜单和 GitHub 图标
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    .stDeployButton {display:none;}
+    </style>
+""", unsafe_allow_html=True)
+
+# ==================== 2. 本地数据库配置 ====================
+DB_FILE = "records_db.csv"
+
+# 表头顺序定义
+COLUMNS = ["册列", "日期"]
+for i in range(1, 11):
+    COLUMNS.extend([f"底料{i}", f"底料{i}数"])
+for i in range(1, 8):
+    COLUMNS.extend([f"配料{i}", f"配料{i}数"])
+COLUMNS.extend(["深浅", "红蓝", "黄绿"])
+
+def load_data():
+    """加载本地数据，如果文件不存在则创建一个空的 DataFrame"""
+    if os.path.exists(DB_FILE):
+        return pd.read_csv(DB_FILE)
+    else:
+        return pd.DataFrame(columns=COLUMNS)
+
+def save_data(df):
+    """保存数据到本地 CSV 文件"""
+    df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+
+# ==================== 3. 材料数据字典 ====================
+BASE_MATERIALS = [
+    "无", "一白", "一白拉链泡", "一级大红", "三色", "三色涤膜", "中灰", "二白", "二白拉丝", 
+    "二白拉链泡", "于三色", "于中灰", "于二白", "于大红", "于灰泡", "于特白", "于粉红", 
+    "于花白", "于针织黑", "于黑泡", "兰切片", "兰白片", "冯三色", "冯大红", "吸塑片", 
+    "咖啡", "土黄", "土黄长丝", "墨绿", "壬紫红", "大红", "大红拉链泡", "天兰", "好一白", 
+    "好三色", "好大红", "好宝兰", "好浅三色", "好浅灰", "好灰泡", "好特白", "好特白长丝", 
+    "好特黑", "好白涤膜", "好白长丝", "好紫红", "好芷青", "好金黄", "好黑泡", "好黑长丝", 
+    "宝兰", "差天兰", "差宝兰", "广西大红", "广西特黑", "广西紫红", "广西鲜大红", "广西黑", 
+    "普大红", "普白", "暗大红", "本白", "杂拉丝泡", "杂片", "李大红", "李紫红", "果绿", 
+    "梅红", "梅红涤膜", "棕切片", "油壶切片", "油壶片", "油壶白片", "浅三色", "浅兰切片", 
+    "浅宝兰", "浅果绿", "浅灰", "深三色", "深大红", "深灰", "混宝兰", "混遮光", "灰切片", 
+    "灰泡", "灰涤膜", "特白", "特白涤膜", "特白长丝", "特级粉红", "特级紫红", "特黑", "白", 
+    "白丝泡", "白切片", "白切粒", "白吸塑片", "白块", "白拉链泡", "白摩擦料", "白摩擦片", 
+    "白杂切片", "白泡", "白涤膜", "白片", "白长丝", "米白", "米色", "米色涤膜", "米黄切片", 
+    "粉红", "粉红涤膜", "紫红", "紫罗兰", "红亮好特白", "红切片", "红拉链丝泡", "红杂片", 
+    "红片", "绿切片", "绿包带", "绿吸塑片", "绿泡", "绿片", "绿黄片", "花白", "芷青", 
+    "荧光红", "荧光黄", "诸暨三色", "遮光", "金黄", "长丝黑", "陈粉红", "陈紫红", "驼色", 
+    "驼色切片", "鲜大红", "黄切片", "黄泡", "黑切片", "黑泡", "黑片", "黑紫红", "黑长丝"
+]
+
+ADDITIVE_MATERIALS = [
+    "无", "0#黄", "1#橙", "1#黄", "104兰", "10572", "10593", "106#红", "10672", 
+    "107#橙", "10732", "108#红", "1080", "109#红", "110#", "114#黄", "115#19", 
+    "1160", "1170", "1178", "1180", "12008", "1220", "1240", "1310", "1380", 
+    "1470", "1480", "1520", "1560", "1770", "1850", "1880", "1920", "197#", 
+    "204", "2170", "2180", "25#橙", "3#兰", "3#黄", "3%兰", "3005", "301", "310", 
+    "3310", "3380", "35%兰", "35%黄", "3560", "3660", "3670", "3680", "4#黄", 
+    "4580", "5#黄", "5%黑", "503", "503兰", "56345", "5B红", "5B绿", "6#黄", 
+    "6203", "6220", "6230", "6260", "6270", "6280", "6970", "7270", "7410", 
+    "7603", "7610", "7640", "7680", "7710", "7780", "8#黄", "9001", "9002", 
+    "9004", "9010", "9020", "9050", "9060", "9070", "BGS", "CB", "FB", "H01", 
+    "H03", "OB-1", "R03", "RL橙", "桃红", "橙R", "紫4", "紫6", "紫7", "紫B", 
+    "群青", "钛白粉", "黄棕", "黑母粒"
+]
+
+# ==================== 4. 界面展示 - 新增与录入 (Create) ====================
+st.title("📝 实验室配色数据库 (本地存储版)")
+
+with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=True):
+    with st.form("data_entry_form", clear_on_submit=False):
+        st.subheader("📌 基础信息")
+        c_base1, c_base2 = st.columns(2)
+        with c_base1: ce_lie = st.number_input("册列 (批次号)", value=1, step=1)
+        with c_base2: date_val = st.date_input("日期", value=datetime.today())
+
+        st.markdown("---")
+        st.subheader("📦 底料输入区域 - ⚠️ 严格校验: 总和必须正好等于 2000g")
+        base_data = []
+        col_b1, col_b2 = st.columns(2)
+        
+        for i in range(1, 11):
+            target_col = col_b1 if i <= 5 else col_b2
+            with target_col:
+                bc1, bc2 = st.columns([3, 2])
+                with bc1: b_name = st.selectbox(f"底料 {i}", BASE_MATERIALS, key=f"b_name_{i}")
+                with bc2: b_qty = st.number_input(f"底料 {i} 数量(g)", min_value=0.0, value=0.0, step=10.0, key=f"b_qty_{i}")
+                base_data.append((b_name, b_qty))
+
+        st.markdown("---")
+        st.subheader("🧪 配料输入区域 (精确至克)")
+        add_data = []
+        col_a1, col_a2 = st.columns(2)
+        for i in range(1, 8):
+            target_col = col_a1 if i <= 4 else col_a2
+            with target_col:
+                ac1, ac2 = st.columns([3, 2])
+                with ac1: a_name = st.selectbox(f"配料 {i}", ADDITIVE_MATERIALS, key=f"a_name_{i}")
+                with ac2: a_qty = st.number_input(f"配料 {i} 数量(g)", min_value=0.0, value=0.0, step=0.01, format="%.3f", key=f"a_qty_{i}")
+                add_data.append((a_name, a_qty))
+
+        st.markdown("---")
+        st.subheader("🎯 实际呈现颜色值")
+        color_col1, color_col2, color_col3 = st.columns(3)
+        with color_col1: depth = st.number_input("深浅", value=0.0, step=0.1)
+        with color_col2: red_blue = st.number_input("红蓝", value=0.0, step=0.1)
+        with color_col3: yellow_green = st.number_input("黄绿", value=0.0, step=0.1)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        submit_btn = st.form_submit_button("✅ 校验并录入", use_container_width=True)
+
+    # 提交逻辑与 2000g 严格校验
+    if submit_btn:
+        # 1. 计算底料总和
+        base_sum = sum(qty for name, qty in base_data if name != "无")
+        
+        if base_sum != 2000:
+            st.error(f"❌ **录入失败：底料总和不合规！**\n\n当前底料总和为 **{base_sum}g**，必须严格等于 **2000g**。请向上修改数值后再提交。")
+        else:
+            # 2. 如果等于 2000，则组合数据并保存
+            row_dict = {
+                "册列": ce_lie,
+                "日期": date_val.strftime("%Y%m%d")
+            }
+            for i, (name, qty) in enumerate(base_data, 1):
+                row_dict[f"底料{i}"] = name
+                row_dict[f"底料{i}数"] = qty if name != "无" else 0
+            for i, (name, qty) in enumerate(add_data, 1):
+                row_dict[f"配料{i}"] = name
+                row_dict[f"配料{i}数"] = qty if name != "无" else 0
+            row_dict["深浅"] = depth
+            row_dict["红蓝"] = red_blue
+            row_dict["黄绿"] = yellow_green
+
+            df = load_data()
+            new_row = pd.DataFrame([row_dict])
+            df = pd.concat([df, new_row], ignore_index=True)
+            save_data(df)
+            
+            st.success("🎉 数据录入成功！已永久保存至本地数据库。您可以在下方直接预览或修改它。")
+            st.rerun() # 刷新页面显示新数据
+
+# ==================== 5. 数据面板 - 查、改、删 (Read, Update, Delete) ====================
+st.markdown("---")
+st.subheader("📚 历史数据管理库")
+st.info("💡 **操作指南**：\n- **修改**：双击下方表格内的任意单元格即可直接修改文字或数值。\n- **删除**：点击选中表格最左侧的复选框，然后按键盘上的 `Delete` 或 `Backspace` 键即可删除整行。\n- **保存生效**：修改或删除完成后，必须点击表格下方的【💾 保存表格更改】按钮，操作才会永久生效。")
+
+# 加载最新数据
+current_df = load_data()
+
+if current_df.empty:
+    st.warning("📭 数据库当前为空，请先在上方录入数据。")
+else:
+    # 交互式表格 data_editor
+    edited_df = st.data_editor(
+        current_df, 
+        use_container_width=True,
+        num_rows="dynamic", # 允许动态增删行
+        height=400
+    )
+    
+    col_save, col_export = st.columns(2)
+    
+    # 修改保存按钮
+    with col_save:
+        if st.button("💾 保存表格更改 (修改/删除后点击)", type="primary", use_container_width=True):
+            save_data(edited_df)
+            st.success("✅ 数据库更新成功！")
+            st.rerun()
+            
+    # 导出 Excel 按钮
+    with col_export:
+        def to_excel(df):
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='配色数据')
+            return output.getvalue()
+        
+        st.download_button(
+            label="📥 导出全部数据为 Excel",
+            data=to_excel(current_df), # 导出原本保存好的数据
+            file_name=f"配方合集_{datetime.now().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            use_container_width=True
+        )
