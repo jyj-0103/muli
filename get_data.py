@@ -62,12 +62,22 @@ COLUMNS.extend(["深浅", "红蓝", "黄绿"])
 def load_data():
     if os.path.exists(DB_FILE):
         df = pd.read_csv(DB_FILE)
-        # 填充空值为 "无" 或 0，防止崩溃
-        for col in df.columns:
-            if "数" in col or col in ["深浅", "红蓝", "黄绿"]:
-                df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            else:
-                df[col] = df[col].astype(str).replace('nan', '无').fillna('无')
+        # 强力清理系统：防止历史CSV里的错别字导致崩溃
+        for i in range(1, 11):
+            col = f"底料{i}"
+            df[col] = df[col].astype(str).str.strip()
+            df.loc[~df[col].isin(BASE_MATERIALS), col] = "无" # 不在列表里的全部强制变成“无”
+            df[f"底料{i}数"] = pd.to_numeric(df[f"底料{i}数"], errors='coerce').fillna(0)
+            
+        for i in range(1, 8):
+            col = f"配料{i}"
+            df[col] = df[col].astype(str).str.strip()
+            df.loc[~df[col].isin(ADDITIVE_MATERIALS), col] = "无"
+            df[f"配料{i}数"] = pd.to_numeric(df[f"配料{i}数"], errors='coerce').fillna(0)
+            
+        for col in ["深浅", "红蓝", "黄绿"]:
+            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+            
         return df
     return pd.DataFrame(columns=COLUMNS)
 
@@ -148,16 +158,22 @@ current_df = load_data()
 if current_df.empty:
     st.warning("📭 数据库当前为空，请先在上方录入数据。")
 else:
-    st.info("💡 **操作说明**：\n- **修改数据**：直接双击表格修改。\n- **删除数据**：勾选第一列的 `🗑️ 选中删除`，然后点击红色的【删除选中行】按钮。\n- **保存修改**：修改数据后，必须点击蓝色的【校验并保存修改】按钮生效。")
+    st.info("💡 **操作说明**：\n- **修改数据**：直接双击表格修改（材料列已锁定为下拉菜单，无法乱填）。\n- **删除数据**：勾选第一列的 `🗑️ 选中删除`，然后点击红色的【删除选中行】按钮。\n- **保存修改**：修改数据后，必须点击蓝色的【校验并保存修改】按钮生效。")
     
-    # 插入一个专用于勾选删除的列 (布尔类型，Checkbox)
     current_df.insert(0, "🗑️ 选中删除", False)
 
-    # 显示交互式表格（取消了导致崩溃的严格下拉限制，改为底层校验）
+    # 给交互式表格设置强力下拉约束，彻底锁死填错字的可能
+    col_config = {}
+    for i in range(1, 11):
+        col_config[f"底料{i}"] = st.column_config.SelectboxColumn("底料选项", options=BASE_MATERIALS, required=True)
+    for i in range(1, 8):
+        col_config[f"配料{i}"] = st.column_config.SelectboxColumn("配料选项", options=ADDITIVE_MATERIALS, required=True)
+
     edited_df = st.data_editor(
         current_df, 
         use_container_width=True,
-        num_rows="fixed", # 行数固定，通过专门勾选删除
+        num_rows="fixed", 
+        column_config=col_config, # 载入下拉菜单约束
         hide_index=True,
         height=400
     )
@@ -167,41 +183,26 @@ else:
     # ================= 按钮 1：校验并保存修改 =================
     with col_btn1:
         if st.button("💾 校验并保存修改", type="primary", use_container_width=True):
-            # 去除复选框列
             df_to_save = edited_df.drop(columns=["🗑️ 选中删除"])
-            
             is_valid = True
             error_msg = ""
             
             for idx, row in df_to_save.iterrows():
                 base_sum = 0
-                
-                # 校验底料
                 for i in range(1, 11):
                     mat = str(row[f"底料{i}"]).strip()
-                    if mat not in BASE_MATERIALS:
-                        is_valid, error_msg = False, f"❌ 修改失败：第 {idx+1} 行的底料名称【{mat}】不在标准库中！"
-                        break
                     if mat != "无":
                         base_sum += float(row[f"底料{i}数"])
-                if not is_valid: break
                 
-                # 校验配料
-                for i in range(1, 8):
-                    mat = str(row[f"配料{i}"]).strip()
-                    if mat not in ADDITIVE_MATERIALS:
-                        is_valid, error_msg = False, f"❌ 修改失败：第 {idx+1} 行的配料名称【{mat}】不在标准库中！"
-                        break
-                if not is_valid: break
-                
-                # 校验底料总和2000
+                # 严格拦截：只要有一行的底料总和不是 2000，就直接报错阻断
                 if abs(base_sum - 2000) > 0.01:
-                    is_valid, error_msg = False, f"❌ 修改失败：第 {idx+1} 行的底料总和变为 {base_sum}g，未达到 2000g！"
+                    is_valid = False
+                    error_msg = f"❌ **拒绝保存！** 第 **{idx+1}** 行修改后的底料总和变为 **{base_sum}g**，未达到规定的 2000g。请检查数值！"
                     break
                     
             if is_valid:
                 save_data(df_to_save)
-                st.success("✅ 校验通过！修改已成功保存。")
+                st.success("✅ 校验通过！底料总和全为 2000g，修改已成功保存。")
                 st.rerun()
             else:
                 st.error(error_msg)
@@ -209,9 +210,7 @@ else:
     # ================= 按钮 2：删除选中的行 =================
     with col_btn2:
         if st.button("🚨 删除勾选的行", use_container_width=True):
-            # 筛选出没有被勾选的行保留下来
             rows_to_keep = edited_df[edited_df["🗑️ 选中删除"] == False]
-            # 去除复选框列
             rows_to_keep = rows_to_keep.drop(columns=["🗑️ 选中删除"])
             
             if len(rows_to_keep) == len(current_df):
@@ -229,7 +228,6 @@ else:
             df.to_excel(writer, index=False, sheet_name='配色数据')
         return output.getvalue()
     
-    # 导出时去掉第一列的复选框
     export_df = current_df.drop(columns=["🗑️ 选中删除"])
     
     st.download_button(
