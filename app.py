@@ -36,7 +36,7 @@ MODEL_FILE_PATH = "smart_color_models.pkl"
 DATA_FILE_PATH = "processed_2.xlsx"
 
 # ⚠️ 必须把这行替换为你自己 GitHub Releases 里真实存在的下载链接 ⚠️
-MODEL_DOWNLOAD_URL = "https://github.com/jyj-0103/muli/releases/download/model2/smart_color_models.pkl"
+MODEL_DOWNLOAD_URL = "https://github.com/Jyj-030103/muli/releases/download/model1/smart_color_models.pkl"
 
 @st.cache_resource
 def ensure_model_exists():
