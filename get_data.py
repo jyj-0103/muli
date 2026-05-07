@@ -62,11 +62,11 @@ COLUMNS.extend(["深浅", "红蓝", "黄绿"])
 def load_data():
     if os.path.exists(DB_FILE):
         df = pd.read_csv(DB_FILE)
-        # 强力清理系统：防止历史CSV里的错别字导致崩溃
+        # 强力清理系统
         for i in range(1, 11):
             col = f"底料{i}"
             df[col] = df[col].astype(str).str.strip()
-            df.loc[~df[col].isin(BASE_MATERIALS), col] = "无" # 不在列表里的全部强制变成“无”
+            df.loc[~df[col].isin(BASE_MATERIALS), col] = "无"
             df[f"底料{i}数"] = pd.to_numeric(df[f"底料{i}数"], errors='coerce').fillna(0)
             
         for i in range(1, 8):
@@ -95,7 +95,7 @@ with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=F
         with c2: date_val = st.date_input("日期", value=datetime.today())
 
         st.markdown("---")
-        st.subheader("📦 底料输入区域 - ⚠️ 严格校验: 总和必须正好等于 2000g")
+        st.subheader("📦 底料输入区域 - ⚠️ 严格要求：底料总和必须为 2000")
         base_data = []
         col_b1, col_b2 = st.columns(2)
         for i in range(1, 11):
@@ -128,9 +128,11 @@ with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=F
         submit_btn = st.form_submit_button("✅ 校验并录入", use_container_width=True)
 
     if submit_btn:
+        # 新增录入拦截：只要底料名字不是"无"，就把克数加起来
         base_sum = sum(qty for name, qty in base_data if name != "无")
+        
         if abs(base_sum - 2000) > 0.01:
-            st.error(f"❌ **录入失败：底料总和不合规！** 当前总和为 **{base_sum}g**，必须严格等于 **2000g**。")
+            st.error(f"❌ **错误：底料总和不等于 2000！** 当前系统计算出您的底料总和为 **{base_sum}g**。请向上检查数量并修改后重新提交。")
         else:
             row_dict = {"册列": ce_lie, "日期": date_val.strftime("%Y%m%d")}
             for i, (name, qty) in enumerate(base_data, 1):
@@ -185,27 +187,36 @@ else:
         if st.button("💾 校验并保存修改", type="primary", use_container_width=True):
             df_to_save = edited_df.drop(columns=["🗑️ 选中删除"])
             is_valid = True
-            error_msg = ""
+            error_msgs = []
             
+            # 严格拦截：逐行扫描表格里被修改的数据
             for idx, row in df_to_save.iterrows():
                 base_sum = 0
                 for i in range(1, 11):
                     mat = str(row[f"底料{i}"]).strip()
                     if mat != "无":
-                        base_sum += float(row[f"底料{i}数"])
+                        try:
+                            # 安全地把文本转为数字相加
+                            qty = float(row[f"底料{i}数"])
+                            base_sum += qty
+                        except ValueError:
+                            pass
                 
-                # 严格拦截：只要有一行的底料总和不是 2000，就直接报错阻断
+                # 如果有一行的底料总和不是 2000，记录错误并阻断保存
                 if abs(base_sum - 2000) > 0.01:
                     is_valid = False
-                    error_msg = f"❌ **拒绝保存！** 第 **{idx+1}** 行修改后的底料总和变为 **{base_sum}g**，未达到规定的 2000g。请检查数值！"
-                    break
+                    # idx + 1 是为了告诉用户这是表格里的第几行
+                    error_msgs.append(f"❌ **第 {idx+1} 行错误**：修改后的底料总和算出来是 **{base_sum}g**，未达到规定的 2000g。")
                     
             if is_valid:
                 save_data(df_to_save)
-                st.success("✅ 校验通过！底料总和全为 2000g，修改已成功保存。")
+                st.success("✅ 校验通过！全表底料总和均符合 2000g 标准，修改已成功保存。")
                 st.rerun()
             else:
-                st.error(error_msg)
+                # 把所有报错的行一次性打印在屏幕上
+                st.error("⚠️ **保存被系统拒绝，请修正以下错误后再保存：**")
+                for msg in error_msgs:
+                    st.error(msg)
 
     # ================= 按钮 2：删除选中的行 =================
     with col_btn2:
