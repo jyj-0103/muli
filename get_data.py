@@ -16,6 +16,11 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# 辅助转换函数：确保输入的数字无论如何都能被正确计算
+def safe_float(val):
+    try: return float(val)
+    except: return 0.0
+
 # ==================== 2. 数据库配置与材料字典 ====================
 DB_FILE = "records_db.csv"
 
@@ -62,7 +67,6 @@ COLUMNS.extend(["深浅", "红蓝", "黄绿"])
 def load_data():
     if os.path.exists(DB_FILE):
         df = pd.read_csv(DB_FILE)
-        # 强力清理系统
         for i in range(1, 11):
             col = f"底料{i}"
             df[col] = df[col].astype(str).str.strip()
@@ -77,7 +81,6 @@ def load_data():
             
         for col in ["深浅", "红蓝", "黄绿"]:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
-            
         return df
     return pd.DataFrame(columns=COLUMNS)
 
@@ -128,7 +131,6 @@ with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=F
         submit_btn = st.form_submit_button("✅ 校验并录入", use_container_width=True)
 
     if submit_btn:
-        # 新增录入拦截：只要底料名字不是"无"，就把克数加起来
         base_sum = sum(qty for name, qty in base_data if name != "无")
         
         if abs(base_sum - 2000) > 0.01:
@@ -160,63 +162,63 @@ current_df = load_data()
 if current_df.empty:
     st.warning("📭 数据库当前为空，请先在上方录入数据。")
 else:
-    st.info("💡 **操作说明**：\n- **修改数据**：直接双击表格修改（材料列已锁定为下拉菜单，无法乱填）。\n- **删除数据**：勾选第一列的 `🗑️ 选中删除`，然后点击红色的【删除选中行】按钮。\n- **保存修改**：修改数据后，必须点击蓝色的【校验并保存修改】按钮生效。")
+    st.info("💡 **操作说明**：\n- **修改数据**：直接双击表格修改（材料列已锁定为下拉菜单，无法乱填）。\n- **删除数据**：勾选第一列的 `🗑️ 选中删除`，然后点击红色的【删除选中行】按钮。\n- **保存修改**：如果在表格中修改了数量，系统会**实时监控**，不为 2000 时保存按钮会被强行锁定。")
     
     current_df.insert(0, "🗑️ 选中删除", False)
 
-    # 给交互式表格设置强力下拉约束，彻底锁死填错字的可能
     col_config = {}
     for i in range(1, 11):
         col_config[f"底料{i}"] = st.column_config.SelectboxColumn("底料选项", options=BASE_MATERIALS, required=True)
     for i in range(1, 8):
         col_config[f"配料{i}"] = st.column_config.SelectboxColumn("配料选项", options=ADDITIVE_MATERIALS, required=True)
 
+    # 显示表格并实时获取修改后的结果
     edited_df = st.data_editor(
         current_df, 
         use_container_width=True,
         num_rows="fixed", 
-        column_config=col_config, # 载入下拉菜单约束
+        column_config=col_config, 
         hide_index=True,
         height=400
     )
     
+    # ================= 🚀 实时监控核心逻辑 🚀 =================
+    # 在按钮渲染前，先扫描当前表格所有的行，看看有没有不合格的
+    error_msgs = []
+    for idx, row in edited_df.iterrows():
+        base_sum = 0.0
+        for i in range(1, 11):
+            mat = str(row.get(f"底料{i}", "无")).strip()
+            if mat != "无":
+                qty = safe_float(row.get(f"底料{i}数", 0))
+                base_sum += qty
+        
+        # 严格判断是否等于2000
+        if abs(base_sum - 2000) > 0.01:
+            error_msgs.append(f"❌ **表格第 {idx+1} 行**：当前的底料总和为 **{base_sum}g**，未达到 2000g。")
+
+    # 根据是否有报错，决定按钮的状态
+    if error_msgs:
+        # 有错误，显示红框并锁死按钮
+        st.error("🚨 **检测到表格中有底料不等于2000的记录！【保存修改】功能已被强制锁定。请修改表格中的数字直至满足条件。**")
+        for msg in error_msgs:
+            st.warning(msg)
+        save_button_disabled = True
+    else:
+        # 没错误，显示绿框，允许保存
+        st.success("✅ 实时检测通过：当前表格内所有数据行的底料总和均严格等于 2000g。可以安全保存。")
+        save_button_disabled = False
+
     col_btn1, col_btn2 = st.columns(2)
     
-    # ================= 按钮 1：校验并保存修改 =================
+    # ================= 按钮 1：保存修改 =================
     with col_btn1:
-        if st.button("💾 校验并保存修改", type="primary", use_container_width=True):
+        # 如果 save_button_disabled=True，这个按钮就点不动
+        if st.button("💾 确认并保存所有修改", type="primary", disabled=save_button_disabled, use_container_width=True):
             df_to_save = edited_df.drop(columns=["🗑️ 选中删除"])
-            is_valid = True
-            error_msgs = []
-            
-            # 严格拦截：逐行扫描表格里被修改的数据
-            for idx, row in df_to_save.iterrows():
-                base_sum = 0
-                for i in range(1, 11):
-                    mat = str(row[f"底料{i}"]).strip()
-                    if mat != "无":
-                        try:
-                            # 安全地把文本转为数字相加
-                            qty = float(row[f"底料{i}数"])
-                            base_sum += qty
-                        except ValueError:
-                            pass
-                
-                # 如果有一行的底料总和不是 2000，记录错误并阻断保存
-                if abs(base_sum - 2000) > 0.01:
-                    is_valid = False
-                    # idx + 1 是为了告诉用户这是表格里的第几行
-                    error_msgs.append(f"❌ **第 {idx+1} 行错误**：修改后的底料总和算出来是 **{base_sum}g**，未达到规定的 2000g。")
-                    
-            if is_valid:
-                save_data(df_to_save)
-                st.success("✅ 校验通过！全表底料总和均符合 2000g 标准，修改已成功保存。")
-                st.rerun()
-            else:
-                # 把所有报错的行一次性打印在屏幕上
-                st.error("⚠️ **保存被系统拒绝，请修正以下错误后再保存：**")
-                for msg in error_msgs:
-                    st.error(msg)
+            save_data(df_to_save)
+            st.success("✅ 保存成功！")
+            st.rerun()
 
     # ================= 按钮 2：删除选中的行 =================
     with col_btn2:
