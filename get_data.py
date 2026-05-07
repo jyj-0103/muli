@@ -7,7 +7,6 @@ import os
 # ==================== 1. 页面配置与样式 ====================
 st.set_page_config(page_title="配色数据录入系统", page_icon="📝", layout="wide")
 
-# 隐藏右上角菜单和 GitHub 图标
 st.markdown("""
     <style>
     #MainMenu {visibility: hidden;}
@@ -17,29 +16,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==================== 2. 本地数据库配置 ====================
+# ==================== 2. 数据库配置与材料字典 ====================
 DB_FILE = "records_db.csv"
 
-# 表头顺序定义
-COLUMNS = ["册列", "日期"]
-for i in range(1, 11):
-    COLUMNS.extend([f"底料{i}", f"底料{i}数"])
-for i in range(1, 8):
-    COLUMNS.extend([f"配料{i}", f"配料{i}数"])
-COLUMNS.extend(["深浅", "红蓝", "黄绿"])
-
-def load_data():
-    """加载本地数据，如果文件不存在则创建一个空的 DataFrame"""
-    if os.path.exists(DB_FILE):
-        return pd.read_csv(DB_FILE)
-    else:
-        return pd.DataFrame(columns=COLUMNS)
-
-def save_data(df):
-    """保存数据到本地 CSV 文件"""
-    df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
-
-# ==================== 3. 材料数据字典 ====================
+# 材料字典
 BASE_MATERIALS = [
     "无", "一白", "一白拉链泡", "一级大红", "三色", "三色涤膜", "中灰", "二白", "二白拉丝", 
     "二白拉链泡", "于三色", "于中灰", "于二白", "于大红", "于灰泡", "于特白", "于粉红", 
@@ -75,15 +55,28 @@ ADDITIVE_MATERIALS = [
     "群青", "钛白粉", "黄棕", "黑母粒"
 ]
 
-# ==================== 4. 界面展示 - 新增与录入 (Create) ====================
-st.title("📝 实验室配色数据库 (本地存储版)")
+# 表头
+COLUMNS = ["册列", "日期"]
+for i in range(1, 11): COLUMNS.extend([f"底料{i}", f"底料{i}数"])
+for i in range(1, 8): COLUMNS.extend([f"配料{i}", f"配料{i}数"])
+COLUMNS.extend(["深浅", "红蓝", "黄绿"])
 
-with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=True):
+def load_data():
+    if os.path.exists(DB_FILE): return pd.read_csv(DB_FILE)
+    return pd.DataFrame(columns=COLUMNS)
+
+def save_data(df):
+    df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+
+# ==================== 3. 界面展示 - 新增录入 ====================
+st.title("📝 实验室配色数据库")
+
+with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=False):
     with st.form("data_entry_form", clear_on_submit=False):
         st.subheader("📌 基础信息")
-        c_base1, c_base2 = st.columns(2)
-        with c_base1: ce_lie = st.number_input("册列 (批次号)", value=1, step=1)
-        with c_base2: date_val = st.date_input("日期", value=datetime.today())
+        c1, c2 = st.columns(2)
+        with c1: ce_lie = st.number_input("册列 (批次号)", value=1, step=1)
+        with c2: date_val = st.date_input("日期", value=datetime.today())
 
         st.markdown("---")
         st.subheader("📦 底料输入区域 - ⚠️ 严格校验: 总和必须正好等于 2000g")
@@ -94,8 +87,8 @@ with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=T
             target_col = col_b1 if i <= 5 else col_b2
             with target_col:
                 bc1, bc2 = st.columns([3, 2])
-                with bc1: b_name = st.selectbox(f"底料 {i}", BASE_MATERIALS, key=f"b_name_{i}")
-                with bc2: b_qty = st.number_input(f"底料 {i} 数量(g)", min_value=0.0, value=0.0, step=10.0, key=f"b_qty_{i}")
+                with bc1: b_name = st.selectbox(f"底料 {i}", BASE_MATERIALS, key=f"new_b_name_{i}")
+                with bc2: b_qty = st.number_input(f"底料 {i} 数量(g)", min_value=0.0, value=0.0, step=10.0, key=f"new_b_qty_{i}")
                 base_data.append((b_name, b_qty))
 
         st.markdown("---")
@@ -106,8 +99,8 @@ with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=T
             target_col = col_a1 if i <= 4 else col_a2
             with target_col:
                 ac1, ac2 = st.columns([3, 2])
-                with ac1: a_name = st.selectbox(f"配料 {i}", ADDITIVE_MATERIALS, key=f"a_name_{i}")
-                with ac2: a_qty = st.number_input(f"配料 {i} 数量(g)", min_value=0.0, value=0.0, step=0.01, format="%.3f", key=f"a_qty_{i}")
+                with ac1: a_name = st.selectbox(f"配料 {i}", ADDITIVE_MATERIALS, key=f"new_a_name_{i}")
+                with ac2: a_qty = st.number_input(f"配料 {i} 数量(g)", min_value=0.0, value=0.0, step=0.01, format="%.3f", key=f"new_a_qty_{i}")
                 add_data.append((a_name, a_qty))
 
         st.markdown("---")
@@ -117,22 +110,14 @@ with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=T
         with color_col2: red_blue = st.number_input("红蓝", value=0.0, step=0.1)
         with color_col3: yellow_green = st.number_input("黄绿", value=0.0, step=0.1)
 
-        st.markdown("<br>", unsafe_allow_html=True)
         submit_btn = st.form_submit_button("✅ 校验并录入", use_container_width=True)
 
-    # 提交逻辑与 2000g 严格校验
     if submit_btn:
-        # 1. 计算底料总和
         base_sum = sum(qty for name, qty in base_data if name != "无")
-        
         if base_sum != 2000:
-            st.error(f"❌ **录入失败：底料总和不合规！**\n\n当前底料总和为 **{base_sum}g**，必须严格等于 **2000g**。请向上修改数值后再提交。")
+            st.error(f"❌ **录入失败：底料总和不合规！** 当前总和为 **{base_sum}g**，必须严格等于 **2000g**。")
         else:
-            # 2. 如果等于 2000，则组合数据并保存
-            row_dict = {
-                "册列": ce_lie,
-                "日期": date_val.strftime("%Y%m%d")
-            }
+            row_dict = {"册列": ce_lie, "日期": date_val.strftime("%Y%m%d")}
             for i, (name, qty) in enumerate(base_data, 1):
                 row_dict[f"底料{i}"] = name
                 row_dict[f"底料{i}数"] = qty if name != "无" else 0
@@ -144,53 +129,110 @@ with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=T
             row_dict["黄绿"] = yellow_green
 
             df = load_data()
-            new_row = pd.DataFrame([row_dict])
-            df = pd.concat([df, new_row], ignore_index=True)
+            df = pd.concat([df, pd.DataFrame([row_dict])], ignore_index=True)
             save_data(df)
-            
-            st.success("🎉 数据录入成功！已永久保存至本地数据库。您可以在下方直接预览或修改它。")
-            st.rerun() # 刷新页面显示新数据
+            st.success("🎉 数据录入成功！已永久保存至本地数据库。")
+            st.rerun()
 
-# ==================== 5. 数据面板 - 查、改、删 (Read, Update, Delete) ====================
+# ==================== 4. 数据面板 - 查、改、删 ====================
 st.markdown("---")
-st.subheader("📚 历史数据管理库")
-st.info("💡 **操作指南**：\n- **修改**：双击下方表格内的任意单元格即可直接修改文字或数值。\n- **删除**：点击选中表格最左侧的复选框，然后按键盘上的 `Delete` 或 `Backspace` 键即可删除整行。\n- **保存生效**：修改或删除完成后，必须点击表格下方的【💾 保存表格更改】按钮，操作才会永久生效。")
+st.subheader("📚 历史数据管理库 (支持双击修改)")
 
-# 加载最新数据
 current_df = load_data()
 
 if current_df.empty:
     st.warning("📭 数据库当前为空，请先在上方录入数据。")
 else:
-    # 交互式表格 data_editor
+    # --- 构造列的严格下拉菜单配置，防止修改时乱填 ---
+    col_config = {}
+    for i in range(1, 11):
+        col_config[f"底料{i}"] = st.column_config.SelectboxColumn("底料选项", options=BASE_MATERIALS, required=True)
+    for i in range(1, 8):
+        col_config[f"配料{i}"] = st.column_config.SelectboxColumn("配料选项", options=ADDITIVE_MATERIALS, required=True)
+
+    # 显示交互式表格
     edited_df = st.data_editor(
         current_df, 
         use_container_width=True,
-        num_rows="dynamic", # 允许动态增删行
-        height=400
+        num_rows="fixed", # 固定行数，删除使用下方专门按钮
+        column_config=col_config,
+        height=350
     )
     
-    col_save, col_export = st.columns(2)
-    
-    # 修改保存按钮
-    with col_save:
-        if st.button("💾 保存表格更改 (修改/删除后点击)", type="primary", use_container_width=True):
+    # === 校验并保存修改按钮 ===
+    if st.button("💾 校验并保存表格中的修改", type="primary", use_container_width=True):
+        is_valid = True
+        error_msg = ""
+        
+        # 逐行校验
+        for idx, row in edited_df.iterrows():
+            base_sum = 0
+            # 校验底料字典
+            for i in range(1, 11):
+                mat = str(row[f"底料{i}"])
+                if mat not in BASE_MATERIALS:
+                    is_valid, error_msg = False, f"❌ 错误：第 {idx+1} 行的底料【{mat}】不存在于标准库中！"
+                    break
+                if mat != "无":
+                    base_sum += float(row[f"底料{i}数"])
+            if not is_valid: break
+            
+            # 校验配料字典
+            for i in range(1, 8):
+                mat = str(row[f"配料{i}"])
+                if mat not in ADDITIVE_MATERIALS:
+                    is_valid, error_msg = False, f"❌ 错误：第 {idx+1} 行的配料【{mat}】不存在于标准库中！"
+                    break
+            if not is_valid: break
+            
+            # 校验底料总和是否为 2000
+            if abs(base_sum - 2000) > 0.01:
+                is_valid, error_msg = False, f"❌ 错误：第 {idx+1} 行的底料总和为 {base_sum}g，未达到 2000g！修改失败。"
+                break
+                
+        if is_valid:
             save_data(edited_df)
-            st.success("✅ 数据库更新成功！")
+            st.success("✅ 校验通过！修改已成功保存至底层数据库。")
+            st.rerun()
+        else:
+            st.error(error_msg)
+
+    st.markdown("---")
+    
+    # ==================== 5. 傻瓜式一键删除功能 ====================
+    st.subheader("🗑️ 快捷删除指定记录")
+    st.info("💡 如果有录错或作废的记录，请在下方选择后点击删除。")
+    
+    # 生成供人阅读的选项列表
+    delete_options = []
+    for idx, row in current_df.iterrows():
+        display_text = f"【第 {idx+1} 行】 册列: {row['册列']} | 日期: {row['日期']} | 深浅: {row.get('深浅', 0)}"
+        delete_options.append(display_text)
+        
+    c_del1, c_del2 = st.columns([3, 1])
+    with c_del1:
+        row_to_delete = st.selectbox("请选择你要彻底删除的整行记录：", delete_options, label_visibility="collapsed")
+    with c_del2:
+        if st.button("🚨 确认删除该行", type="primary"):
+            # 提取行号(索引)进行删除
+            target_idx = int(row_to_delete.split("】")[0].replace("【第 ", "")) - 1
+            current_df = current_df.drop(target_idx).reset_index(drop=True)
+            save_data(current_df)
+            st.success("✅ 记录已彻底删除！")
             st.rerun()
             
-    # 导出 Excel 按钮
-    with col_export:
-        def to_excel(df):
-            output = BytesIO()
-            with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                df.to_excel(writer, index=False, sheet_name='配色数据')
-            return output.getvalue()
-        
-        st.download_button(
-            label="📥 导出全部数据为 Excel",
-            data=to_excel(current_df), # 导出原本保存好的数据
-            file_name=f"配方合集_{datetime.now().strftime('%Y%m%d')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            use_container_width=True
-        )
+    # ==================== 6. 导出功能 ====================
+    st.write("")
+    def to_excel(df):
+        output = BytesIO()
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='配色数据')
+        return output.getvalue()
+    
+    st.download_button(
+        label="📥 导出全部数据为 Excel 文件",
+        data=to_excel(current_df),
+        file_name=f"配方合集_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=True
+    )
