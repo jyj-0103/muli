@@ -6,6 +6,7 @@ import joblib
 import json
 import hashlib
 import urllib.request
+import uuid  # 新增：用于生成动态随机 key 防止密码记忆
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
@@ -31,27 +32,12 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==================== 2. 自动拉取 250MB 大模型 ====================
+# ==================== 2. 模型路径与下载链接 ====================
 MODEL_FILE_PATH = "smart_color_models.pkl"
 DATA_FILE_PATH = "processed_2.xlsx"
 
 # ⚠️ 必须把这行替换为你自己 GitHub Releases 里真实存在的下载链接 ⚠️
 MODEL_DOWNLOAD_URL = "https://github.com/jyj-0103/muli/releases/download/model2/smart_color_models.pkl"
-
-@st.cache_resource
-def ensure_model_exists():
-    """如果云端服务器没有模型文件，就自动从 Releases 下载"""
-    if not os.path.exists(MODEL_FILE_PATH):
-        with st.spinner("🚀 首次启动系统，正在从云端拉取 AI 大模型 (约 250MB)，这可能需要 1~2 分钟，请耐心等待..."):
-            try:
-                urllib.request.urlretrieve(MODEL_DOWNLOAD_URL, MODEL_FILE_PATH)
-                st.success("✅ 大模型拉取成功！系统准备就绪。")
-            except Exception as e:
-                st.error(f"❌ 下载模型失败，请检查链接是否正确或仓库是否为Public: {e}")
-                st.stop()
-
-# 执行下载检查
-ensure_model_exists()
 
 # ==================== 3. 纯原生：多用户与审核系统 ====================
 USER_DB_FILE = "users_db.json"
@@ -88,6 +74,12 @@ if "logged_in" not in st.session_state:
     st.session_state["username"] = ""
     st.session_state["is_admin"] = False
 
+# 生成随机且固定的输入框 Key（每次刷新页面都会变，彻底阻断浏览器记忆密码）
+if "pwd_key_login" not in st.session_state:
+    st.session_state["pwd_key_login"] = str(uuid.uuid4())
+    st.session_state["pwd_key_reg1"] = str(uuid.uuid4())
+    st.session_state["pwd_key_reg2"] = str(uuid.uuid4())
+
 def render_auth_page():
     """渲染登录或注册界面"""
     st.markdown("<h1 style='text-align: center;'>🔐 智能配色系统 Pro 内部入口</h1>", unsafe_allow_html=True)
@@ -101,8 +93,9 @@ def render_auth_page():
             st.write("")
             
             if mode_selection == "🔑 账号登录":
-                user_input = st.text_input("👤 用户名")
-                pwd_input = st.text_input("🔑 密码", type="password")
+                user_input = st.text_input("👤 用户名", autocomplete="off")
+                # 使用动态 key 和 autocomplete="new-password" 双管齐下防记忆
+                pwd_input = st.text_input("🔑 密码", type="password", key=st.session_state["pwd_key_login"], autocomplete="new-password")
                 
                 if st.button("🚀 登 录", type="primary", use_container_width=True):
                     if not user_input or not pwd_input:
@@ -117,14 +110,18 @@ def render_auth_page():
                         st.session_state["logged_in"] = True
                         st.session_state["username"] = user_input
                         st.session_state["is_admin"] = users_db[user_input].get("is_admin", False)
+                        
+                        # 登录成功后重置动态 Key，确保下次退出再登录时输入框依然是全新的
+                        st.session_state["pwd_key_login"] = str(uuid.uuid4())
+                        
                         st.success("登录成功！正在进入系统...")
                         st.rerun()
             
             else:
                 st.info("⚠️ 注册的新账号需要等待管理员后台批准后方可使用。")
-                new_user = st.text_input("👤 想要注册的用户名")
-                new_pwd = st.text_input("🔑 设置密码", type="password")
-                new_pwd_confirm = st.text_input("🔑 确认密码", type="password")
+                new_user = st.text_input("👤 想要注册的用户名", autocomplete="off")
+                new_pwd = st.text_input("🔑 设置密码", type="password", key=st.session_state["pwd_key_reg1"], autocomplete="new-password")
+                new_pwd_confirm = st.text_input("🔑 确认密码", type="password", key=st.session_state["pwd_key_reg2"], autocomplete="new-password")
                 
                 if st.button("📝 提交注册申请", type="primary", use_container_width=True):
                     if not new_user or not new_pwd:
@@ -140,6 +137,9 @@ def render_auth_page():
                             "is_approved": False
                         }
                         save_users(users_db)
+                        # 重置注册框 key
+                        st.session_state["pwd_key_reg1"] = str(uuid.uuid4())
+                        st.session_state["pwd_key_reg2"] = str(uuid.uuid4())
                         st.success(f"🎉 账号 [{new_user}] 注册成功！请等待管理员审批后登录。")
 
 # 拦截：如果未登录，则只显示登录/注册界面并停止运行后续代码
@@ -326,7 +326,12 @@ def train_and_save_models():
     except Exception as e: return False, f"模型保存失败: {e}"
 
 def load_models():
-    if not os.path.exists(MODEL_FILE_PATH): return False, f"未找到模型文件 '{MODEL_FILE_PATH}'。"
+    if not os.path.exists(MODEL_FILE_PATH): 
+        if st.session_state["is_admin"]:
+            return False, f"未找到模型文件。您是管理员，请点击上方的「从云端拉取大模型」。"
+        else:
+            return False, f"云端未就绪：系统缺少大模型文件，请联系管理员拉取模型。"
+            
     try:
         model_state = joblib.load(MODEL_FILE_PATH)
         for k, v in model_state.items(): ms[k] = v
@@ -565,9 +570,11 @@ with st.sidebar:
         st.session_state["logged_in"] = False
         st.session_state["username"] = ""
         st.session_state["is_admin"] = False
+        # 退出登录时强制刷新输入框Key
+        st.session_state["pwd_key_login"] = str(uuid.uuid4())
         st.rerun()
         
-    # 如果是管理员，显示专属审核面板
+    # 如果是管理员，显示专属审核面板与模型下载
     if st.session_state["is_admin"]:
         st.markdown("---")
         st.markdown("### 👑 管理员控制台")
@@ -588,6 +595,16 @@ with st.sidebar:
                             save_users(users_db)
                             st.rerun()
                             
+            st.write("---")
+            st.markdown("#### ☁️ 核心系统维护")
+            if st.button("📥 强制从云端拉取大模型", type="primary", use_container_width=True):
+                with st.spinner("🚀 正在下载 AI 大模型 (约 250MB)，请耐心等待..."):
+                    try:
+                        urllib.request.urlretrieve(MODEL_DOWNLOAD_URL, MODEL_FILE_PATH)
+                        st.success("✅ 云端模型拉取成功！现在可以点击下方的【加载模型】了。")
+                    except Exception as e:
+                        st.error(f"❌ 下载模型失败，请检查链接或仓库权限: {e}")
+                            
     st.markdown("---")
     st.image("https://cdn-icons-png.flaticon.com/512/3003/3003054.png", width=60)
     st.header("⚙️ 模型初始化设置")
@@ -602,7 +619,7 @@ with st.sidebar:
                 
         # 仅管理员可见：重新训练模型
         if st.session_state["is_admin"]:
-            if st.button("🚀 重新训练并保存模型", type="secondary", use_container_width=True):
+            if st.button("🚀 根据本地 Excel 重新训练", type="secondary", use_container_width=True):
                 with st.spinner("正在重新训练..."):
                     success, msg = train_and_save_models()
                     if success: st.success(msg)
