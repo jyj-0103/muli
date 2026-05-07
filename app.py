@@ -6,7 +6,7 @@ import joblib
 import json
 import hashlib
 import urllib.request
-import uuid  # 新增：用于生成动态随机 key 防止密码记忆
+import uuid  # 用于生成动态随机 key 防止密码记忆
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
@@ -327,10 +327,7 @@ def train_and_save_models():
 
 def load_models():
     if not os.path.exists(MODEL_FILE_PATH): 
-        if st.session_state["is_admin"]:
-            return False, f"未找到模型文件。您是管理员，请点击上方的「从云端拉取大模型」。"
-        else:
-            return False, f"云端未就绪：系统缺少大模型文件，请联系管理员拉取模型。"
+        return False, f"未找到模型文件。请先点击【从云端拉取大模型】下载。"
             
     try:
         model_state = joblib.load(MODEL_FILE_PATH)
@@ -574,10 +571,12 @@ with st.sidebar:
         st.session_state["pwd_key_login"] = str(uuid.uuid4())
         st.rerun()
         
-    # 如果是管理员，显示专属审核面板与模型下载
+    # ================= 管理员专属控制面板 =================
     if st.session_state["is_admin"]:
         st.markdown("---")
         st.markdown("### 👑 管理员控制台")
+        
+        # 模块A：账号审核
         with st.container(border=True):
             users_db = load_users()
             pending_users = [u for u, d in users_db.items() if not d.get("is_approved", False)]
@@ -595,47 +594,51 @@ with st.sidebar:
                             save_users(users_db)
                             st.rerun()
                             
-            st.write("---")
-            st.markdown("#### ☁️ 核心系统维护")
-            if st.button("📥 强制从云端拉取大模型", type="primary", use_container_width=True):
+        # 模块B：模型管理（只有管理员可见）
+        st.write("")
+        st.markdown("#### ⚙️ AI 模型核心管理")
+        with st.container(border=True):
+            if st.button("📂 启动/加载本地模型", use_container_width=True):
+                with st.spinner("正在加载模型..."):
+                    success, msg = load_models()
+                    if success: st.success(msg)
+                    else: st.error(msg)
+            
+            st.write("")
+            if st.button("📥 从云端强制拉取大模型", type="primary", use_container_width=True):
                 with st.spinner("🚀 正在下载 AI 大模型 (约 250MB)，请耐心等待..."):
                     try:
                         urllib.request.urlretrieve(MODEL_DOWNLOAD_URL, MODEL_FILE_PATH)
-                        st.success("✅ 云端模型拉取成功！现在可以点击下方的【加载模型】了。")
+                        st.success("✅ 云端模型拉取成功！现在可以点击上方的【加载本地模型】了。")
                     except Exception as e:
                         st.error(f"❌ 下载模型失败，请检查链接或仓库权限: {e}")
-                            
-    st.markdown("---")
-    st.image("https://cdn-icons-png.flaticon.com/512/3003/3003054.png", width=60)
-    st.header("⚙️ 模型初始化设置")
-    
-    with st.container(border=True):
-        # 所有人可见：加载模型
-        if st.button("📂 加载已保存模型", use_container_width=True):
-            with st.spinner("正在加载模型..."):
-                success, msg = load_models()
-                if success: st.success(msg)
-                else: st.error(msg)
-                
-        # 仅管理员可见：重新训练模型
-        if st.session_state["is_admin"]:
+
+            st.write("")
             if st.button("🚀 根据本地 Excel 重新训练", type="secondary", use_container_width=True):
                 with st.spinner("正在重新训练..."):
                     success, msg = train_and_save_models()
                     if success: st.success(msg)
                     else: st.error(msg)
-
+                            
+    # ================= 所有人可见的系统运行状态 =================
     st.markdown("---")
+    st.image("https://cdn-icons-png.flaticon.com/512/3003/3003054.png", width=60)
     if ms['is_loaded']:
-        st.success("🟢 模型就绪")
-        st.caption("🔥 高精推演引擎运转中")
-    else: st.warning("🔴 模型未加载")
+        st.success("🟢 核心大模型已就绪")
+        st.caption("🔥 高精推演引擎运转中，可随时使用。")
+    else: 
+        st.warning("🔴 模型尚未启动或未部署")
 
+# ==================== 5.5 如果模型未加载，拦截并提示 ====================
 if not ms['is_loaded']:
-    st.info("👈 请先在左侧点击【加载已保存模型】。")
-    st.stop()
+    st.markdown("<br><br>", unsafe_allow_html=True)
+    if st.session_state["is_admin"]:
+        st.info("👈 **管理员提示：** 当前 AI 模型未处于工作状态。请在左侧侧边栏【AI 模型核心管理】区域点击 **[启动/加载本地模型]**。如果本地缺少模型文件，请先点击 **[从云端强制拉取]**。")
+    else:
+        st.error("⚠️ **系统拦截：** AI 核心推理模型当前尚未启动加载，系统暂时无法提供配色计算服务。请耐心等待，或联系管理员（admin）登录后台进行模型初始化部署。")
+    st.stop() # 阻断下方主界面的渲染
 
-# ==================== 6. 主界面业务 Tabs ====================
+# ==================== 6. 主界面业务 Tabs (模型加载后可见) ====================
 tab1, tab2, tab3, tab4 = st.tabs([
     "💡 方案大厅 (智能推荐)", 
     "🔬 调色实验室 (配方微调)", 
