@@ -23,8 +23,19 @@ warnings.filterwarnings('ignore')
 # ==================== 1. 页面全局配置 (必须放在最前面) ====================
 st.set_page_config(page_title="智能配色系统 Pro", page_icon="🎨", layout="wide")
 
+# 强大的 CSS 控制：隐藏右上角菜单、GitHub 图标、Deploy 按钮以及底部水印
 st.markdown("""
     <style>
+    /* 隐藏右上角的 GitHub 图标、Deploy 按钮和主菜单 */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    .stDeployButton {display:none;}
+    [data-testid="stHeader"] {display: none;}
+    
+    /* 隐藏底部的 Made with Streamlit 水印 */
+    footer {visibility: hidden;}
+    
+    /* 业务原有样式 */
     .big-font { font-size: 20px !important; font-weight: bold; color: #1f77b4; }
     .success-text { color: #2ca02c; font-weight: bold; font-size: 16px; margin-bottom: 5px;}
     .warning-text { color: #ff7f0e; font-weight: bold; font-size: 16px; margin-bottom: 5px;}
@@ -36,7 +47,7 @@ st.markdown("""
 MODEL_FILE_PATH = "smart_color_models.pkl"
 DATA_FILE_PATH = "processed_2.xlsx"
 
-# ⚠️ 必须把这行替换为你自己 GitHub Releases 里真实存在的下载链接 ⚠️
+# ⚠️ 注意：管理员拉取云端大模型时使用的链接 ⚠️
 MODEL_DOWNLOAD_URL = "https://github.com/jyj-0103/muli/releases/download/model2/smart_color_models.pkl"
 
 # ==================== 3. 纯原生：多用户与审核系统 ====================
