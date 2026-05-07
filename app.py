@@ -86,10 +86,14 @@ if "logged_in" not in st.session_state:
     st.session_state["is_admin"] = False
 
 # 生成随机且固定的输入框 Key（每次刷新页面都会变，彻底阻断浏览器记忆密码）
-if "pwd_key_login" not in st.session_state:
-    st.session_state["pwd_key_login"] = str(uuid.uuid4())
-    st.session_state["pwd_key_reg1"] = str(uuid.uuid4())
-    st.session_state["pwd_key_reg2"] = str(uuid.uuid4())
+def init_pwd_keys():
+    keys = ["pwd_key_login", "pwd_key_reg1", "pwd_key_reg2", 
+            "pwd_key_old", "pwd_key_new1", "pwd_key_new2", "pwd_key_admin_reset"]
+    for k in keys:
+        if k not in st.session_state:
+            st.session_state[k] = str(uuid.uuid4())
+
+init_pwd_keys()
 
 def render_auth_page():
     """渲染登录或注册界面"""
@@ -100,12 +104,11 @@ def render_auth_page():
     with col2:
         with st.container(border=True):
             users_db = load_users()
-            mode_selection = st.radio("请选择操作", ["🔑 账号登录", "📝 申请注册"], horizontal=True, label_visibility="collapsed")
+            mode_selection = st.radio("请选择操作", ["🔑 账号登录", "📝 申请注册", "❓ 忘记密码"], horizontal=True, label_visibility="collapsed")
             st.write("")
             
             if mode_selection == "🔑 账号登录":
                 user_input = st.text_input("👤 用户名", autocomplete="off")
-                # 使用动态 key 和 autocomplete="new-password" 双管齐下防记忆
                 pwd_input = st.text_input("🔑 密码", type="password", key=st.session_state["pwd_key_login"], autocomplete="new-password")
                 
                 if st.button("🚀 登 录", type="primary", use_container_width=True):
@@ -121,14 +124,11 @@ def render_auth_page():
                         st.session_state["logged_in"] = True
                         st.session_state["username"] = user_input
                         st.session_state["is_admin"] = users_db[user_input].get("is_admin", False)
-                        
-                        # 登录成功后重置动态 Key，确保下次退出再登录时输入框依然是全新的
-                        st.session_state["pwd_key_login"] = str(uuid.uuid4())
-                        
+                        st.session_state["pwd_key_login"] = str(uuid.uuid4()) # 重置key
                         st.success("登录成功！正在进入系统...")
                         st.rerun()
             
-            else:
+            elif mode_selection == "📝 申请注册":
                 st.info("⚠️ 注册的新账号需要等待管理员后台批准后方可使用。")
                 new_user = st.text_input("👤 想要注册的用户名", autocomplete="off")
                 new_pwd = st.text_input("🔑 设置密码", type="password", key=st.session_state["pwd_key_reg1"], autocomplete="new-password")
@@ -148,10 +148,20 @@ def render_auth_page():
                             "is_approved": False
                         }
                         save_users(users_db)
-                        # 重置注册框 key
                         st.session_state["pwd_key_reg1"] = str(uuid.uuid4())
                         st.session_state["pwd_key_reg2"] = str(uuid.uuid4())
                         st.success(f"🎉 账号 [{new_user}] 注册成功！请等待管理员审批后登录。")
+                        
+            else: # 忘记密码
+                st.warning("⚠️ **系统安全策略提示**")
+                st.markdown("""
+                由于本系统为内部受控软件，出于数据安全考量，未接入自动发送邮件找回功能。
+                
+                如果您忘记了密码，请执行以下操作：
+                1. 联系您的 **系统管理员 (Admin)**。
+                2. 提供您的用户名，请求管理员在后台为您 **强制重置密码**。
+                3. 获取新密码后，使用新密码登录，并在左侧菜单自行修改。
+                """)
 
 # 拦截：如果未登录，则只显示登录/注册界面并停止运行后续代码
 if not st.session_state["logged_in"]:
@@ -574,11 +584,36 @@ def recommend_single(target_depth, target_red_blue, target_yellow_green, k=3, co
 # ==================== 5. 侧边栏：控制台与模型加载 ====================
 with st.sidebar:
     st.success(f"👤 欢迎回来：**{st.session_state['username']}**")
+    
+    # ---------------- 所有人都能用的修改密码功能 ----------------
+    with st.expander("⚙️ 修改我的密码"):
+        old_pwd = st.text_input("当前密码", type="password", key=st.session_state["pwd_key_old"], autocomplete="new-password")
+        new_pwd = st.text_input("新密码", type="password", key=st.session_state["pwd_key_new1"], autocomplete="new-password")
+        new_pwd_confirm = st.text_input("确认新密码", type="password", key=st.session_state["pwd_key_new2"], autocomplete="new-password")
+        
+        if st.button("✔️ 确认修改密码", use_container_width=True):
+            users_db = load_users()
+            current_user = st.session_state["username"]
+            
+            if not old_pwd or not new_pwd:
+                st.error("请完整填写所有密码项！")
+            elif users_db[current_user]["password"] != hash_password(old_pwd):
+                st.error("❌ 当前旧密码输入错误！")
+            elif new_pwd != new_pwd_confirm:
+                st.error("❌ 两次输入的新密码不一致！")
+            else:
+                users_db[current_user]["password"] = hash_password(new_pwd)
+                save_users(users_db)
+                # 修改成功后重置输入框ID防止记忆残留
+                st.session_state["pwd_key_old"] = str(uuid.uuid4())
+                st.session_state["pwd_key_new1"] = str(uuid.uuid4())
+                st.session_state["pwd_key_new2"] = str(uuid.uuid4())
+                st.success("🎉 密码修改成功！下次请使用新密码登录。")
+
     if st.button("🚪 退出登录", use_container_width=True):
         st.session_state["logged_in"] = False
         st.session_state["username"] = ""
         st.session_state["is_admin"] = False
-        # 退出登录时强制刷新输入框Key
         st.session_state["pwd_key_login"] = str(uuid.uuid4())
         st.rerun()
         
@@ -589,6 +624,7 @@ with st.sidebar:
         
         # 模块A：账号审核
         with st.container(border=True):
+            st.markdown("#### 📝 账号审核")
             users_db = load_users()
             pending_users = [u for u, d in users_db.items() if not d.get("is_approved", False)]
             
@@ -605,7 +641,26 @@ with st.sidebar:
                             save_users(users_db)
                             st.rerun()
                             
-        # 模块B：模型管理（只有管理员可见）
+        # 模块B：重置其他人密码 (管理员特权)
+        st.write("")
+        with st.container(border=True):
+            st.markdown("#### 🔑 强制重置密码 (用户忘记密码)")
+            users_db = load_users()
+            all_usernames = list(users_db.keys())
+            
+            user_to_reset = st.selectbox("选择要重置的账号", all_usernames)
+            admin_new_pwd = st.text_input("为该用户设置新密码", type="password", key=st.session_state["pwd_key_admin_reset"], autocomplete="new-password")
+            
+            if st.button("⚠️ 执行重置", type="primary", use_container_width=True):
+                if not admin_new_pwd:
+                    st.error("请输入新密码！")
+                else:
+                    users_db[user_to_reset]["password"] = hash_password(admin_new_pwd)
+                    save_users(users_db)
+                    st.session_state["pwd_key_admin_reset"] = str(uuid.uuid4())
+                    st.success(f"✅ 已成功将账号 **[{user_to_reset}]** 的密码强制重置！")
+
+        # 模块C：模型管理（只有管理员可见）
         st.write("")
         st.markdown("#### ⚙️ AI 模型核心管理")
         with st.container(border=True):
