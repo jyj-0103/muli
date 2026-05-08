@@ -16,12 +16,66 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# 辅助转换函数：确保输入的数字无论如何都能被正确计算
+# 辅助转换函数
 def safe_float(val):
     try: return float(val)
     except: return 0.0
 
-# ==================== 2. 数据库配置与材料字典 ====================
+# ==================== 2. 全局状态初始化 & 弹窗监控 ====================
+# 初始化弹窗状态
+if "show_toast" not in st.session_state:
+    st.session_state.show_toast = ""
+if "show_balloons" not in st.session_state:
+    st.session_state.show_balloons = False
+
+# 触发弹窗提醒 (跨越刷新边界)
+if st.session_state.show_toast:
+    st.toast(st.session_state.show_toast, icon="✅")
+    st.session_state.show_toast = ""
+if st.session_state.show_balloons:
+    st.balloons()
+    st.session_state.show_balloons = False
+
+# 初始化录入区的 Session State (为了实现“选无全无”的联动效果)
+for i in range(1, 11):
+    if f"new_b_name_{i}" not in st.session_state: st.session_state[f"new_b_name_{i}"] = "无"
+    if f"new_b_qty_{i}" not in st.session_state: st.session_state[f"new_b_qty_{i}"] = 0.0
+for i in range(1, 8):
+    if f"new_a_name_{i}" not in st.session_state: st.session_state[f"new_a_name_{i}"] = "无"
+    if f"new_a_qty_{i}" not in st.session_state: st.session_state[f"new_a_qty_{i}"] = 0.0
+for key in ["color_depth", "color_rb", "color_yg"]:
+    if key not in st.session_state: st.session_state[key] = 0.0
+
+# 清空表单的函数
+def clear_form():
+    for i in range(1, 11):
+        st.session_state[f"new_b_name_{i}"] = "无"
+        st.session_state[f"new_b_qty_{i}"] = 0.0
+    for i in range(1, 8):
+        st.session_state[f"new_a_name_{i}"] = "无"
+        st.session_state[f"new_a_qty_{i}"] = 0.0
+    st.session_state.color_depth = 0.0
+    st.session_state.color_rb = 0.0
+    st.session_state.color_yg = 0.0
+
+# 联动逻辑：选“无”后自动把后续清零
+def base_change(idx):
+    if st.session_state[f"new_b_name_{idx}"] == "无":
+        st.session_state[f"new_b_qty_{idx}"] = 0.0
+        # 强制后续所有的底料全部变成无和0
+        for j in range(idx + 1, 11):
+            st.session_state[f"new_b_name_{j}"] = "无"
+            st.session_state[f"new_b_qty_{j}"] = 0.0
+
+def add_change(idx):
+    if st.session_state[f"new_a_name_{idx}"] == "无":
+        st.session_state[f"new_a_qty_{idx}"] = 0.0
+        # 强制后续所有的配料全部变成无和0
+        for j in range(idx + 1, 8):
+            st.session_state[f"new_a_name_{j}"] = "无"
+            st.session_state[f"new_a_qty_{j}"] = 0.0
+
+# ==================== 3. 数据库配置与材料字典 ====================
 DB_FILE = "records_db.csv"
 
 BASE_MATERIALS = [
@@ -87,73 +141,73 @@ def load_data():
 def save_data(df):
     df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
 
-# ==================== 3. 界面展示 - 新增录入 ====================
+# ==================== 4. 界面展示 - 动态新增录入 ====================
 st.title("📝 实验室配色数据库")
 
 with st.expander("➕ 点击此处展开以【新增录入数据】", expanded=False):
-    with st.form("data_entry_form", clear_on_submit=False):
-        st.subheader("📌 基础信息")
-        c1, c2 = st.columns(2)
-        with c1: ce_lie = st.number_input("册列 (批次号)", value=1, step=1)
-        with c2: date_val = st.date_input("日期", value=datetime.today())
+    st.subheader("📌 基础信息")
+    c1, c2 = st.columns(2)
+    with c1: ce_lie = st.number_input("册列 (批次号)", value=1, step=1)
+    with c2: date_val = st.date_input("📅 日期", value=datetime.today(), format="YYYY/MM/DD")
 
-        st.markdown("---")
-        st.subheader("📦 底料输入区域 - ⚠️ 严格要求：底料总和必须为 2000")
-        base_data = []
-        col_b1, col_b2 = st.columns(2)
-        for i in range(1, 11):
-            target_col = col_b1 if i <= 5 else col_b2
-            with target_col:
-                bc1, bc2 = st.columns([3, 2])
-                with bc1: b_name = st.selectbox(f"底料 {i}", BASE_MATERIALS, key=f"new_b_name_{i}")
-                with bc2: b_qty = st.number_input(f"底料 {i} 数量(g)", min_value=0.0, value=0.0, step=10.0, key=f"new_b_qty_{i}")
-                base_data.append((b_name, b_qty))
+    st.markdown("---")
+    st.subheader("📦 底料输入区域 - ⚠️ 严格要求：底料总和必须为 2000")
+    col_b1, col_b2 = st.columns(2)
+    for i in range(1, 11):
+        target_col = col_b1 if i <= 5 else col_b2
+        with target_col:
+            bc1, bc2 = st.columns([3, 2])
+            with bc1: st.selectbox(f"底料 {i}", BASE_MATERIALS, key=f"new_b_name_{i}", on_change=base_change, args=(i,))
+            with bc2: st.number_input(f"数量(g)", min_value=0.0, step=10.0, key=f"new_b_qty_{i}")
 
-        st.markdown("---")
-        st.subheader("🧪 配料输入区域 (精确至克)")
-        add_data = []
-        col_a1, col_a2 = st.columns(2)
-        for i in range(1, 8):
-            target_col = col_a1 if i <= 4 else col_a2
-            with target_col:
-                ac1, ac2 = st.columns([3, 2])
-                with ac1: a_name = st.selectbox(f"配料 {i}", ADDITIVE_MATERIALS, key=f"new_a_name_{i}")
-                with ac2: a_qty = st.number_input(f"配料 {i} 数量(g)", min_value=0.0, value=0.0, step=0.01, format="%.3f", key=f"new_a_qty_{i}")
-                add_data.append((a_name, a_qty))
+    st.markdown("---")
+    st.subheader("🧪 配料输入区域 (精确至克)")
+    col_a1, col_a2 = st.columns(2)
+    for i in range(1, 8):
+        target_col = col_a1 if i <= 4 else col_a2
+        with target_col:
+            ac1, ac2 = st.columns([3, 2])
+            with ac1: st.selectbox(f"配料 {i}", ADDITIVE_MATERIALS, key=f"new_a_name_{i}", on_change=add_change, args=(i,))
+            with ac2: st.number_input(f"数量(g)", min_value=0.0, step=0.01, format="%.3f", key=f"new_a_qty_{i}")
 
-        st.markdown("---")
-        st.subheader("🎯 实际呈现颜色值")
-        color_col1, color_col2, color_col3 = st.columns(3)
-        with color_col1: depth = st.number_input("深浅", value=0.0, step=0.1)
-        with color_col2: red_blue = st.number_input("红蓝", value=0.0, step=0.1)
-        with color_col3: yellow_green = st.number_input("黄绿", value=0.0, step=0.1)
+    st.markdown("---")
+    st.subheader("🎯 实际呈现颜色值")
+    color_col1, color_col2, color_col3 = st.columns(3)
+    with color_col1: st.number_input("深浅", step=0.1, key="color_depth")
+    with color_col2: st.number_input("红蓝", step=0.1, key="color_rb")
+    with color_col3: st.number_input("黄绿", step=0.1, key="color_yg")
 
-        submit_btn = st.form_submit_button("✅ 校验并录入", use_container_width=True)
-
-    if submit_btn:
-        base_sum = sum(qty for name, qty in base_data if name != "无")
+    if st.button("✅ 校验并录入当前数据", type="primary", use_container_width=True):
+        base_sum = sum(st.session_state[f"new_b_qty_{i}"] for i in range(1, 11) if st.session_state[f"new_b_name_{i}"] != "无")
         
         if abs(base_sum - 2000) > 0.01:
-            st.error(f"❌ **错误：底料总和不等于 2000！** 当前系统计算出您的底料总和为 **{base_sum}g**。请向上检查数量并修改后重新提交。")
+            st.error(f"❌ **错误：底料总和不等于 2000！** 当前总和为 **{base_sum}g**。请向上检查数量并修改后重新提交。")
         else:
             row_dict = {"册列": ce_lie, "日期": date_val.strftime("%Y%m%d")}
-            for i, (name, qty) in enumerate(base_data, 1):
+            for i in range(1, 11):
+                name = st.session_state[f"new_b_name_{i}"]
                 row_dict[f"底料{i}"] = name
-                row_dict[f"底料{i}数"] = qty if name != "无" else 0
-            for i, (name, qty) in enumerate(add_data, 1):
+                row_dict[f"底料{i}数"] = st.session_state[f"new_b_qty_{i}"] if name != "无" else 0.0
+            for i in range(1, 8):
+                name = st.session_state[f"new_a_name_{i}"]
                 row_dict[f"配料{i}"] = name
-                row_dict[f"配料{i}数"] = qty if name != "无" else 0
-            row_dict["深浅"] = depth
-            row_dict["红蓝"] = red_blue
-            row_dict["黄绿"] = yellow_green
+                row_dict[f"配料{i}数"] = st.session_state[f"new_a_qty_{i}"] if name != "无" else 0.0
+            
+            row_dict["深浅"] = st.session_state.color_depth
+            row_dict["红蓝"] = st.session_state.color_rb
+            row_dict["黄绿"] = st.session_state.color_yg
 
             df = load_data()
             df = pd.concat([df, pd.DataFrame([row_dict])], ignore_index=True)
             save_data(df)
-            st.success("🎉 数据录入成功！已永久保存至本地数据库。")
+            
+            # 设置成功弹窗与动画
+            st.session_state.show_toast = "数据录入成功！底层库已更新。"
+            st.session_state.show_balloons = True
+            clear_form()
             st.rerun()
 
-# ==================== 4. 数据面板 - 查、改、删 ====================
+# ==================== 5. 数据面板 - 查、改、删 ====================
 st.markdown("---")
 st.subheader("📚 历史数据管理库 (支持双击修改与勾选删除)")
 
@@ -162,7 +216,7 @@ current_df = load_data()
 if current_df.empty:
     st.warning("📭 数据库当前为空，请先在上方录入数据。")
 else:
-    st.info("💡 **操作说明**：\n- **修改数据**：直接双击表格修改（材料列已锁定为下拉菜单，无法乱填）。\n- **删除数据**：勾选第一列的 `🗑️ 选中删除`，然后点击红色的【删除选中行】按钮。\n- **保存修改**：如果在表格中修改了数量，系统会**实时监控**，不为 2000 时保存按钮会被强行锁定。")
+    st.info("💡 **操作说明**：\n- **自动清空机制**：在表格里修改材料为【无】，保存时它后面的材料会自动全部清空！\n- **修改数据**：直接双击表格修改（材料列已锁定为下拉菜单，无法乱填）。\n- **删除数据**：勾选第一列的 `🗑️ 选中删除`，然后点击红色的【删除选中行】按钮。")
     
     current_df.insert(0, "🗑️ 选中删除", False)
 
@@ -172,7 +226,6 @@ else:
     for i in range(1, 8):
         col_config[f"配料{i}"] = st.column_config.SelectboxColumn("配料选项", options=ADDITIVE_MATERIALS, required=True)
 
-    # 显示表格并实时获取修改后的结果
     edited_df = st.data_editor(
         current_df, 
         use_container_width=True,
@@ -182,42 +235,61 @@ else:
         height=400
     )
     
-    # ================= 🚀 实时监控核心逻辑 🚀 =================
-    # 在按钮渲染前，先扫描当前表格所有的行，看看有没有不合格的
+    # === 实时监控底料总和 ===
     error_msgs = []
     for idx, row in edited_df.iterrows():
         base_sum = 0.0
+        found_none_base = False
+        # 实时计算时，遇到无就停止加总（模拟保存后的级联效果）
         for i in range(1, 11):
             mat = str(row.get(f"底料{i}", "无")).strip()
-            if mat != "无":
-                qty = safe_float(row.get(f"底料{i}数", 0))
-                base_sum += qty
+            if found_none_base or mat == "无":
+                found_none_base = True
+            else:
+                base_sum += safe_float(row.get(f"底料{i}数", 0))
         
-        # 严格判断是否等于2000
         if abs(base_sum - 2000) > 0.01:
             error_msgs.append(f"❌ **表格第 {idx+1} 行**：当前的底料总和为 **{base_sum}g**，未达到 2000g。")
 
-    # 根据是否有报错，决定按钮的状态
     if error_msgs:
-        # 有错误，显示红框并锁死按钮
-        st.error("🚨 **检测到表格中有底料不等于2000的记录！【保存修改】功能已被强制锁定。请修改表格中的数字直至满足条件。**")
-        for msg in error_msgs:
-            st.warning(msg)
+        st.error("🚨 **检测到表格中有底料不等于2000的记录！【保存修改】功能已被强制锁定。**")
+        for msg in error_msgs: st.warning(msg)
         save_button_disabled = True
     else:
-        # 没错误，显示绿框，允许保存
-        st.success("✅ 实时检测通过：当前表格内所有数据行的底料总和均严格等于 2000g。可以安全保存。")
+        st.success("✅ 实时检测通过：当前表格内所有数据行的底料总和均严格等于 2000g。")
         save_button_disabled = False
 
     col_btn1, col_btn2 = st.columns(2)
     
     # ================= 按钮 1：保存修改 =================
     with col_btn1:
-        # 如果 save_button_disabled=True，这个按钮就点不动
         if st.button("💾 确认并保存所有修改", type="primary", disabled=save_button_disabled, use_container_width=True):
             df_to_save = edited_df.drop(columns=["🗑️ 选中删除"])
+            
+            # === 保存时执行“选中无，后续全无”的数据清洗 ===
+            for idx, row in df_to_save.iterrows():
+                # 清洗底料
+                found_none_base = False
+                for i in range(1, 11):
+                    if found_none_base or str(row[f"底料{i}"]).strip() == "无":
+                        found_none_base = True
+                        df_to_save.at[idx, f"底料{i}"] = "无"
+                        df_to_save.at[idx, f"底料{i}数"] = 0.0
+                    else:
+                        df_to_save.at[idx, f"底料{i}数"] = safe_float(row[f"底料{i}数"])
+                        
+                # 清洗配料
+                found_none_add = False
+                for i in range(1, 8):
+                    if found_none_add or str(row[f"配料{i}"]).strip() == "无":
+                        found_none_add = True
+                        df_to_save.at[idx, f"配料{i}"] = "无"
+                        df_to_save.at[idx, f"配料{i}数"] = 0.0
+                    else:
+                        df_to_save.at[idx, f"配料{i}数"] = safe_float(row[f"配料{i}数"])
+
             save_data(df_to_save)
-            st.success("✅ 保存成功！")
+            st.session_state.show_toast = "表格修改已成功应用并保存！"
             st.rerun()
 
     # ================= 按钮 2：删除选中的行 =================
@@ -230,10 +302,10 @@ else:
                 st.warning("⚠️ 您还没有勾选任何需要删除的行！请先在表格最左侧的复选框打勾。")
             else:
                 save_data(rows_to_keep)
-                st.success("✅ 选中的行已被彻底删除！")
+                st.session_state.show_toast = "选中的数据行已被彻底删除！"
                 st.rerun()
 
-    # ==================== 5. 导出 Excel ====================
+    # ==================== 6. 导出 Excel ====================
     st.markdown("---")
     def to_excel(df):
         output = BytesIO()
