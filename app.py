@@ -218,21 +218,34 @@ def train_and_save_models():
 
     ms['recipes'].clear()
     for _, row in df.iterrows():
-        date_val = row['日期']
+        # 获取日期
+        date_val = row.get('日期', '')
         if pd.isna(date_val): continue
         date_str = str(int(date_val)) if isinstance(date_val, (int, float)) else str(date_val)
-        depth, red_blue, yellow_green = row['深浅'], row['红蓝'], row['黄绿']
+        
+        # 获取册列 (如果 Excel 没有该列则默认为 "无")
+        series_val = row.get('册列', '无')
+        series_str = str(series_val).strip() if pd.notna(series_val) and str(series_val).strip() != '' else "无"
+        
+        depth, red_blue, yellow_green = row.get('深浅'), row.get('红蓝'), row.get('黄绿')
         if pd.isna(depth) or pd.isna(red_blue) or pd.isna(yellow_green): continue
         
         bases, additives = {}, {}
         for name_col, qty_col in base_cols:
-            name, qty = row[name_col], safe_float(row[qty_col])
+            name, qty = row.get(name_col), safe_float(row.get(qty_col))
             if pd.notna(name) and str(name).strip() not in ('无', ''): bases[str(name).strip()] = qty
         for name_col, qty_col in add_cols:
-            name, qty = row[name_col], safe_float(row[qty_col])
+            name, qty = row.get(name_col), safe_float(row.get(qty_col))
             if pd.notna(name) and str(name).strip() not in ('无', ''): additives[str(name).strip()] = qty
                 
-        ms['recipes'].append({'date': date_str, 'bases': bases, 'additives': additives, 'color': (float(depth), float(red_blue), float(yellow_green))})
+        # 存入历史配方（增加 'series' 字段）
+        ms['recipes'].append({
+            'date': date_str, 
+            'series': series_str,
+            'bases': bases, 
+            'additives': additives, 
+            'color': (float(depth), float(red_blue), float(yellow_green))
+        })
 
     base_count = defaultdict(int)
     for rec in ms['recipes']:
@@ -567,6 +580,7 @@ def recommend_single(target_depth, target_red_blue, target_yellow_green, k=3, co
             
         results.append({
             'date': rec['date'],
+            'series': rec.get('series', '无'), # 兼容旧版未包含册列的模型
             'history_bases': rec['bases'],
             'history_additives': rec['additives'],
             'history_color': rec['color'],
@@ -739,7 +753,7 @@ with tab1:
                     rc1, rc2 = st.columns(2)
                     with rc1:
                         st.markdown("<div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:10px;'>📜 <b>历史配方数据 (基准参考)</b></div>", unsafe_allow_html=True)
-                        st.caption(f"**日期:** {res['date']}")
+                        st.caption(f"**册列:** {res['series']} &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}")
                         
                         st.write("**历史底料:**")
                         if res['history_bases']: st.dataframe(dict_to_dataframe(res['history_bases']), hide_index=True, use_container_width=True)
