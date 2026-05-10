@@ -210,8 +210,12 @@ def get_model_state():
 ms = get_model_state()
 
 def train_and_save_models():
-    try: df = pd.read_excel(DATA_FILE_PATH, sheet_name=0)
-    except FileNotFoundError: return False, f"找不到文件: {DATA_FILE_PATH}，请检查路径。"
+    try: 
+        df = pd.read_excel(DATA_FILE_PATH, sheet_name=0)
+        # ⚠️ 强力清洗表头：去除所有的首尾空格，防止 "册列 " 匹配不到 "册列"
+        df.columns = df.columns.str.strip()
+    except FileNotFoundError: 
+        return False, f"找不到文件: {DATA_FILE_PATH}，请检查路径。"
 
     base_cols = [(f'底料{i}', f'底料{i}数量') for i in range(1, 11)]
     add_cols = [(f'配料{i}', f'配料{i}数量') for i in range(1, 8)]
@@ -223,10 +227,23 @@ def train_and_save_models():
         if pd.isna(date_val): continue
         date_str = str(int(date_val)) if isinstance(date_val, (int, float)) else str(date_val)
         
-        # 获取册列 (如果 Excel 没有该列则默认为 "无")
+        # ⚠️ 获取并清洗册列数据 (处理浮点数读成 6.0 的情况，或者空值)
         series_val = row.get('册列', '无')
-        series_str = str(series_val).strip() if pd.notna(series_val) and str(series_val).strip() != '' else "无"
-        
+        if pd.isna(series_val) or str(series_val).strip() in ('', 'nan', 'None'):
+            series_str = "无"
+        else:
+            try:
+                # 如果是纯数字类型
+                if isinstance(series_val, (int, float)):
+                    series_str = str(int(series_val))
+                else:
+                    series_str = str(series_val).strip()
+                    # 如果是字符串形式的浮点数，比如 "6.0"
+                    if series_str.endswith('.0') and series_str[:-2].isdigit():
+                        series_str = series_str[:-2]
+            except:
+                series_str = str(series_val).strip()
+
         depth, red_blue, yellow_green = row.get('深浅'), row.get('红蓝'), row.get('黄绿')
         if pd.isna(depth) or pd.isna(red_blue) or pd.isna(yellow_green): continue
         
@@ -238,10 +255,10 @@ def train_and_save_models():
             name, qty = row.get(name_col), safe_float(row.get(qty_col))
             if pd.notna(name) and str(name).strip() not in ('无', ''): additives[str(name).strip()] = qty
                 
-        # 存入历史配方（增加 'series' 字段）
+        # 存入历史配方
         ms['recipes'].append({
             'date': date_str, 
-            'series': series_str,
+            'series': series_str,  # 已经洗净的册列字段
             'bases': bases, 
             'additives': additives, 
             'color': (float(depth), float(red_blue), float(yellow_green))
@@ -580,7 +597,7 @@ def recommend_single(target_depth, target_red_blue, target_yellow_green, k=3, co
             
         results.append({
             'date': rec['date'],
-            'series': rec.get('series', '无'), # 兼容旧版未包含册列的模型
+            'series': rec.get('series', '无'), # 兼容并获取册列
             'history_bases': rec['bases'],
             'history_additives': rec['additives'],
             'history_color': rec['color'],
@@ -753,7 +770,7 @@ with tab1:
                     rc1, rc2 = st.columns(2)
                     with rc1:
                         st.markdown("<div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:10px;'>📜 <b>历史配方数据 (基准参考)</b></div>", unsafe_allow_html=True)
-                        st.caption(f"**册列:** {res['series']} &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}")
+                        st.markdown(f"**【册列】：** <span style='color:red; font-size:18px; font-weight:bold;'>{res['series']}</span> &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}", unsafe_allow_html=True)
                         
                         st.write("**历史底料:**")
                         if res['history_bases']: st.dataframe(dict_to_dataframe(res['history_bases']), hide_index=True, use_container_width=True)
