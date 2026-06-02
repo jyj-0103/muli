@@ -6,6 +6,7 @@ import joblib
 import json
 import hashlib
 import urllib.request
+import ssl  # 新增：用于解决网络证书报错
 import uuid  # 用于生成动态随机 key 防止密码记忆
 from sklearn.preprocessing import StandardScaler
 from sklearn.neighbors import NearestNeighbors
@@ -37,13 +38,36 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==================== 2. 全局常量 (支持直接从GitHub读取) ====================
+# ==================== 2. 全局常量 ====================
 MODEL_FILE_PATH = "smart_color_models.pkl"
 DATA_FILE_PATH = "processed_2.xlsx"
 MODEL_DOWNLOAD_URL = "https://github.com/jyj-0103/muli/releases/download/model2/smart_color_models.pkl"
-
-# 注意：为了让程序能够下载真实的 Excel 文件而不是网页，必须使用 raw.githubusercontent.com 格式
 DATA_DOWNLOAD_URL = "https://raw.githubusercontent.com/jyj-0103/muli/master/processed_2.xlsx"
+
+# ==================== 防墙网络下载器 ====================
+def robust_download(url, filepath):
+    """带代理回退和伪装的强力下载器"""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    
+    try:
+        # 尝试 1：直连 GitHub
+        req = urllib.request.Request(url, headers=headers)
+        with urllib.request.urlopen(req, context=ctx, timeout=10) as response, open(filepath, 'wb') as out_file:
+            out_file.write(response.read())
+        return True, "直连下载成功"
+    except Exception as e1:
+        # 尝试 2：使用代理镜像 (解决国内 raw.githubusercontent 被墙问题)
+        proxy_url = f"https://ghp.ci/{url}"
+        try:
+            req2 = urllib.request.Request(proxy_url, headers=headers)
+            with urllib.request.urlopen(req2, context=ctx, timeout=15) as response, open(filepath, 'wb') as out_file:
+                out_file.write(response.read())
+            return True, "通过镜像代理下载成功"
+        except Exception as e2:
+            return False, f"网络拉取失败 => 直连报错: {e1} | 镜像报错: {e2}"
 
 # ==================== 3. 纯原生：多用户与审核系统 ====================
 USER_DB_FILE = "users_db.json"
@@ -87,27 +111,20 @@ init_pwd_keys()
 def render_auth_page():
     st.markdown("<h1 style='text-align: center;'>🔐 智能配色系统 Pro 内部入口</h1>", unsafe_allow_html=True)
     st.write("---")
-    
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
         with st.container(border=True):
             users_db = load_users()
             mode_selection = st.radio("请选择操作", ["🔑 账号登录", "📝 申请注册", "❓ 忘记密码"], horizontal=True, label_visibility="collapsed")
             st.write("")
-            
             if mode_selection == "🔑 账号登录":
                 user_input = st.text_input("👤 用户名", autocomplete="off")
                 pwd_input = st.text_input("🔑 密码", type="password", key=st.session_state["pwd_key_login"], autocomplete="new-password")
-                
                 if st.button("🚀 登 录", type="primary", use_container_width=True):
-                    if not user_input or not pwd_input:
-                        st.error("请输入用户名和密码！")
-                    elif user_input not in users_db:
-                        st.error("❌ 该账号不存在！")
-                    elif users_db[user_input]["password"] != hash_password(pwd_input):
-                        st.error("❌ 密码错误！")
-                    elif not users_db[user_input]["is_approved"]:
-                        st.warning("⏳ 您的账号正在等待管理员审核，暂时无法登录。请联系管理员！")
+                    if not user_input or not pwd_input: st.error("请输入用户名和密码！")
+                    elif user_input not in users_db: st.error("❌ 该账号不存在！")
+                    elif users_db[user_input]["password"] != hash_password(pwd_input): st.error("❌ 密码错误！")
+                    elif not users_db[user_input]["is_approved"]: st.warning("⏳ 账号正等待管理员审核。")
                     else:
                         st.session_state["logged_in"] = True
                         st.session_state["username"] = user_input
@@ -115,34 +132,23 @@ def render_auth_page():
                         st.session_state["pwd_key_login"] = str(uuid.uuid4())
                         st.success("登录成功！正在进入系统...")
                         st.rerun()
-            
             elif mode_selection == "📝 申请注册":
                 st.info("⚠️ 注册的新账号需要等待管理员后台批准后方可使用。")
                 new_user = st.text_input("👤 想要注册的用户名", autocomplete="off")
                 new_pwd = st.text_input("🔑 设置密码", type="password", key=st.session_state["pwd_key_reg1"], autocomplete="new-password")
                 new_pwd_confirm = st.text_input("🔑 确认密码", type="password", key=st.session_state["pwd_key_reg2"], autocomplete="new-password")
-                
                 if st.button("📝 提交注册申请", type="primary", use_container_width=True):
-                    if not new_user or not new_pwd:
-                        st.error("信息填写不完整！")
-                    elif new_pwd != new_pwd_confirm:
-                        st.error("❌ 两次输入的密码不一致！")
-                    elif new_user in users_db:
-                        st.error("❌ 该用户名已被注册，请换一个！")
+                    if not new_user or not new_pwd: st.error("信息填写不完整！")
+                    elif new_pwd != new_pwd_confirm: st.error("❌ 两次输入的密码不一致！")
+                    elif new_user in users_db: st.error("❌ 该用户名已被注册，请换一个！")
                     else:
-                        users_db[new_user] = {
-                            "password": hash_password(new_pwd),
-                            "is_admin": False,
-                            "is_approved": False
-                        }
+                        users_db[new_user] = {"password": hash_password(new_pwd), "is_admin": False, "is_approved": False}
                         save_users(users_db)
                         st.session_state["pwd_key_reg1"] = str(uuid.uuid4())
                         st.session_state["pwd_key_reg2"] = str(uuid.uuid4())
                         st.success(f"🎉 账号 [{new_user}] 注册成功！请等待管理员审批后登录。")
-                        
             else:
-                st.warning("⚠️ **系统安全策略提示**")
-                st.markdown("""由于本系统为内部受控软件，如果您忘记了密码，请联系您的 **系统管理员 (Admin)** 执行强制重置。""")
+                st.warning("⚠️ **系统安全策略提示**\n\n如果您忘记了密码，请联系您的 **系统管理员 (Admin)** 执行强制重置。")
 
 if not st.session_state["logged_in"]:
     render_auth_page()
@@ -174,22 +180,20 @@ def dict_to_dataframe(d, col_name="用量"):
     df[col_name] = df[col_name].apply(lambda x: f"{x:g}")
     return df
 
-# ==================== 5. ★ 纯原生 Excel 极速解析 (包含云端拉取) ★ ====================
+# ==================== 5. ★ 强化原生 Excel 解析 ★ ====================
 @st.cache_data(show_spinner=False)
 def load_raw_recipes_from_excel(file_path):
-    """直接解析 Excel，提供给极速检索功能，完全不依赖机器学习库。若无文件自动去GitHub下载。"""
+    """带精准报错定位的数据加载器"""
     if not os.path.exists(file_path):
-        try:
-            # 如果本地没找到 Excel，尝试从 GitHub 自动拉取
-            urllib.request.urlretrieve(DATA_DOWNLOAD_URL, file_path)
-        except Exception:
-            return None
+        success, err_msg = robust_download(DATA_DOWNLOAD_URL, file_path)
+        if not success:
+            return None, f"文件不存在且云端下载失败。详细原因: {err_msg}"
             
     try:
         df = pd.read_excel(file_path, sheet_name=0)
         df.columns = df.columns.str.strip()
-    except Exception:
-        return None
+    except Exception as e:
+        return None, f"Excel 读取失败！如果是缺失包报错，请确保已安装 'openpyxl' (`pip install openpyxl`)。系统底层报错: {str(e)}"
 
     base_cols = [(f'底料{i}', f'底料{i}数量') for i in range(1, 11)]
     add_cols = [(f'配料{i}', f'配料{i}数量') for i in range(1, 8)]
@@ -226,31 +230,29 @@ def load_raw_recipes_from_excel(file_path):
             'date': date_str, 'series': series_str, 'bases': bases, 
             'additives': additives, 'color': (float(depth), float(red_blue), float(yellow_green))
         })
-    return raw_recipes
+        
+    if not raw_recipes:
+        return None, "Excel 文件已读取，但未能成功解析出任何有效配方。请检查表格列名是否为'底料1', '深浅', '红蓝' 等。"
+        
+    return raw_recipes, ""
 
 def search_history_direct_fast(target_depth, target_red_blue, target_yellow_green, k=5):
-    """纯数学计算距离，脱离 AI 核心"""
-    raw_recipes = load_raw_recipes_from_excel(DATA_FILE_PATH)
-    if not raw_recipes: return None
+    raw_recipes, err_msg = load_raw_recipes_from_excel(DATA_FILE_PATH)
+    if not raw_recipes: return None, err_msg
     
     target_color = np.array([target_depth, target_red_blue, target_yellow_green])
     results = []
     
     for rec in raw_recipes:
         hist_color = np.array(rec['color'])
-        # 计算纯欧氏距离 (色差)
         dist = np.linalg.norm(hist_color - target_color)
         results.append({
-            'date': rec['date'],
-            'series': rec['series'],
-            'history_bases': rec['bases'],
-            'history_additives': rec['additives'],
-            'history_color': rec['color'],
-            'color_distance': dist
+            'date': rec['date'], 'series': rec['series'], 'history_bases': rec['bases'],
+            'history_additives': rec['additives'], 'history_color': rec['color'], 'color_distance': dist
         })
         
     results.sort(key=lambda x: x['color_distance'])
-    return results[:k]
+    return results[:k], ""
 
 # ==================== 6. AI 模型初始化及训练逻辑 ====================
 @st.cache_resource
@@ -266,12 +268,10 @@ def get_model_state():
 ms = get_model_state()
 
 def train_and_save_models():
-    # 强制重新读取 Excel 以供 AI 训练
-    raw_data = load_raw_recipes_from_excel(DATA_FILE_PATH)
-    if not raw_data: return False, f"找不到数据文件或格式错误: {DATA_FILE_PATH}。尝试点击【从云端同步最新 Excel 数据】。"
+    raw_data, err_msg = load_raw_recipes_from_excel(DATA_FILE_PATH)
+    if not raw_data: return False, f"加载基础数据失败: {err_msg}"
     
     ms['recipes'] = raw_data
-    
     base_count = defaultdict(int)
     for rec in ms['recipes']:
         for b in rec['bases']: base_count[b] += 1
@@ -290,7 +290,6 @@ def train_and_save_models():
             if a in ms['add_to_idx']: ms['Y_add'][i, ms['add_to_idx'][a]] = qty
 
     X_color = np.array([rec['color'] for rec in ms['recipes']])
-
     ms['red_additives'].clear()
     ms['blue_additives'].clear()
     corr_threshold = 0.3
@@ -393,7 +392,7 @@ def load_models():
         return True, f"模型加载成功！共载入 {len(ms['recipes'])} 条历史配方。"
     except Exception as e: return False, f"加载模型失败: {e}"
 
-# ==== 下面是只有加载AI大模型后才能用的推演预测逻辑 ====
+# ==== 下面是AI大模型推演预测逻辑 ====
 def predict_color(base_dict, add_dict):
     base_abs = np.zeros(ms['n_bases'])
     for b, qty in base_dict.items():
@@ -681,13 +680,13 @@ with st.sidebar:
         with st.container(border=True):
             
             if st.button("📥 从云端同步最新 Excel 数据", use_container_width=True):
-                with st.spinner("正在从 GitHub 下载最新数据文件..."):
-                    try:
-                        urllib.request.urlretrieve(DATA_DOWNLOAD_URL, DATA_FILE_PATH)
-                        load_raw_recipes_from_excel.clear() # 清除缓存，确保下次读取最新数据
+                with st.spinner("正在从 GitHub 强力拉取最新数据文件..."):
+                    success, err_msg = robust_download(DATA_DOWNLOAD_URL, DATA_FILE_PATH)
+                    if success:
+                        load_raw_recipes_from_excel.clear() # 清除缓存
                         st.success("✅ Excel 数据已更新！您可以去体验 [极速查历史]，或重新训练模型。")
-                    except Exception as e:
-                        st.error(f"❌ 数据拉取失败: {e}")
+                    else:
+                        st.error(f"❌ 拉取失败，请检查网络或联系开发者。底层报错信息: {err_msg}")
                         
             st.write("")
             if st.button("📂 启动/加载本地 AI 大模型", use_container_width=True):
@@ -699,11 +698,11 @@ with st.sidebar:
             st.write("")
             if st.button("📥 从云端强制拉取 AI 大模型", type="primary", use_container_width=True):
                 with st.spinner("🚀 正在下载 AI 大模型 (约 250MB)，请耐心等待..."):
-                    try:
-                        urllib.request.urlretrieve(MODEL_DOWNLOAD_URL, MODEL_FILE_PATH)
+                    success, err_msg = robust_download(MODEL_DOWNLOAD_URL, MODEL_FILE_PATH)
+                    if success:
                         st.success("✅ 云端模型拉取成功！现在可以点击上方的【启动/加载本地 AI 大模型】了。")
-                    except Exception as e:
-                        st.error(f"❌ 下载模型失败，请检查链接或仓库权限: {e}")
+                    else:
+                        st.error(f"❌ 下载模型失败: {err_msg}")
 
             st.write("")
             if st.button("🚀 根据本地 Excel 重新训练模型", type="secondary", use_container_width=True):
@@ -745,40 +744,41 @@ with tab1:
             btn_fast_search = st.button("⚡ 立即极速检索", type="primary", use_container_width=True)
             
     if btn_fast_search:
-        fast_results = search_history_direct_fast(target_d_fast, target_rb_fast, target_yg_fast, k=5)
-        
-        if fast_results is None:
-            st.error(f"❌ 找不到数据文件！系统未能成功从云端下载 `processed_2.xlsx`。如果您是管理员，请在左侧侧边栏点击【从云端同步最新 Excel 数据】尝试重试。")
-        elif len(fast_results) == 0:
-            st.warning("未匹配到任何有效的历史配方数据，请检查 Excel 格式是否正确。")
-        else:
-            st.success(f"✅ 检索完成！为您直接找到 {len(fast_results)} 个颜色最相近的历史配方：")
+        with st.spinner("正在提取历史数据并测算距离..."):
+            fast_results, err_msg = search_history_direct_fast(target_d_fast, target_rb_fast, target_yg_fast, k=5)
             
-            for i, res in enumerate(fast_results, 1):
-                with st.container(border=True):
-                    st.markdown(f"### 📖 历史原单 {i} <span style='font-size: 14px; color: #888;'> (纯色差距离 = {res['color_distance']:.4f})</span>", unsafe_allow_html=True)
-                    st.write("")
-                    
-                    st.markdown(f"**【册列】：** <span style='color:red; font-size:18px; font-weight:bold;'>{res['series']}</span> &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}", unsafe_allow_html=True)
-                    
-                    rc1, rc2, rc3 = st.columns(3)
-                    with rc1:
-                        st.write("**📦 历史底料:**")
-                        if res['history_bases']: st.dataframe(dict_to_dataframe(res['history_bases']), hide_index=True, use_container_width=True)
-                        else: st.markdown("无")
+            if fast_results is None:
+                st.error(f"❌ **操作失败！未能加载基础数据。**\n\n**详细诊断日志：**\n\n`{err_msg}`\n\n如果您是管理员，请通过左侧边栏尝试【从云端同步最新 Excel 数据】。如果提示包缺失，请在您的部署环境中运行 `pip install openpyxl`。")
+            elif len(fast_results) == 0:
+                st.warning("未匹配到任何有效的历史配方数据，请检查 Excel 格式是否正确。")
+            else:
+                st.success(f"✅ 检索完成！为您直接找到 {len(fast_results)} 个颜色最相近的历史配方：")
+                
+                for i, res in enumerate(fast_results, 1):
+                    with st.container(border=True):
+                        st.markdown(f"### 📖 历史原单 {i} <span style='font-size: 14px; color: #888;'> (纯色差距离 = {res['color_distance']:.4f})</span>", unsafe_allow_html=True)
+                        st.write("")
                         
-                    with rc2:
-                        st.write("**🧪 历史配料:**")
-                        if res['history_additives']: st.dataframe(dict_to_dataframe(res['history_additives']), hide_index=True, use_container_width=True)
-                        else: st.markdown("无")
+                        st.markdown(f"**【册列】：** <span style='color:red; font-size:18px; font-weight:bold;'>{res['series']}</span> &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}", unsafe_allow_html=True)
                         
-                    with rc3:
-                        st.write("**🎯 历史呈现颜色:**")
-                        c_d, c_rb, c_yg = res['history_color']
-                        
-                        st.metric("深浅", f"{c_d:.2f}", delta=f"偏离目标 {c_d - target_d_fast:.2f}", delta_color="off")
-                        st.metric("红蓝", f"{c_rb:.2f}", delta=f"偏离目标 {c_rb - target_rb_fast:.2f}", delta_color="off")
-                        st.metric("黄绿", f"{c_yg:.2f}", delta=f"偏离目标 {c_yg - target_yg_fast:.2f}", delta_color="off")
+                        rc1, rc2, rc3 = st.columns(3)
+                        with rc1:
+                            st.write("**📦 历史底料:**")
+                            if res['history_bases']: st.dataframe(dict_to_dataframe(res['history_bases']), hide_index=True, use_container_width=True)
+                            else: st.markdown("无")
+                            
+                        with rc2:
+                            st.write("**🧪 历史配料:**")
+                            if res['history_additives']: st.dataframe(dict_to_dataframe(res['history_additives']), hide_index=True, use_container_width=True)
+                            else: st.markdown("无")
+                            
+                        with rc3:
+                            st.write("**🎯 历史呈现颜色:**")
+                            c_d, c_rb, c_yg = res['history_color']
+                            
+                            st.metric("深浅", f"{c_d:.2f}", delta=f"偏离目标 {c_d - target_d_fast:.2f}", delta_color="off")
+                            st.metric("红蓝", f"{c_rb:.2f}", delta=f"偏离目标 {c_rb - target_rb_fast:.2f}", delta_color="off")
+                            st.metric("黄绿", f"{c_yg:.2f}", delta=f"偏离目标 {c_yg - target_yg_fast:.2f}", delta_color="off")
 
 
 # ================= 注意：后续四个 Tab 依赖 AI 模型 =================
