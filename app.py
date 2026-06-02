@@ -16,7 +16,6 @@ from collections import defaultdict
 import xgboost as xgb
 import warnings
 from scipy.stats import spearmanr
-from sklearn.metrics import mean_absolute_error
 
 warnings.filterwarnings('ignore')
 
@@ -26,16 +25,11 @@ st.set_page_config(page_title="智能配色系统 Pro", page_icon="🎨", layout
 # 强大的 CSS 控制：隐藏右上角菜单、GitHub 图标、Deploy 按钮以及底部水印
 st.markdown("""
     <style>
-    /* 隐藏右上角的 GitHub 图标、Deploy 按钮和主菜单 */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     .stDeployButton {display:none;}
     [data-testid="stHeader"] {display: none;}
-    
-    /* 隐藏底部的 Made with Streamlit 水印 */
     footer {visibility: hidden;}
-    
-    /* 业务原有样式 */
     .big-font { font-size: 20px !important; font-weight: bold; color: #1f77b4; }
     .success-text { color: #2ca02c; font-weight: bold; font-size: 16px; margin-bottom: 5px;}
     .warning-text { color: #ff7f0e; font-weight: bold; font-size: 16px; margin-bottom: 5px;}
@@ -43,24 +37,19 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==================== 2. 模型路径与下载链接 ====================
+# ==================== 2. 全局常量 ====================
 MODEL_FILE_PATH = "smart_color_models.pkl"
 DATA_FILE_PATH = "processed_2.xlsx"
-
-# ⚠️ 注意：管理员拉取云端大模型时使用的链接 ⚠️
 MODEL_DOWNLOAD_URL = "https://github.com/jyj-0103/muli/releases/download/model2/smart_color_models.pkl"
 
 # ==================== 3. 纯原生：多用户与审核系统 ====================
 USER_DB_FILE = "users_db.json"
 
 def hash_password(password):
-    """简单的密码加密，防止明文泄露"""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def load_users():
-    """加载本地账号数据库"""
     if not os.path.exists(USER_DB_FILE):
-        # 初始化默认超级管理员 admin / 123456
         default_db = {
             "admin": {
                 "password": hash_password("123456"),
@@ -75,17 +64,14 @@ def load_users():
         return json.load(f)
 
 def save_users(db):
-    """保存账号到本地"""
     with open(USER_DB_FILE, 'w', encoding='utf-8') as f:
         json.dump(db, f, indent=4)
 
-# 初始化 Session 状态
 if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
     st.session_state["username"] = ""
     st.session_state["is_admin"] = False
 
-# 生成随机且固定的输入框 Key（每次刷新页面都会变，彻底阻断浏览器记忆密码）
 def init_pwd_keys():
     keys = ["pwd_key_login", "pwd_key_reg1", "pwd_key_reg2", 
             "pwd_key_old", "pwd_key_new1", "pwd_key_new2", "pwd_key_admin_reset"]
@@ -96,7 +82,6 @@ def init_pwd_keys():
 init_pwd_keys()
 
 def render_auth_page():
-    """渲染登录或注册界面"""
     st.markdown("<h1 style='text-align: center;'>🔐 智能配色系统 Pro 内部入口</h1>", unsafe_allow_html=True)
     st.write("---")
     
@@ -124,7 +109,7 @@ def render_auth_page():
                         st.session_state["logged_in"] = True
                         st.session_state["username"] = user_input
                         st.session_state["is_admin"] = users_db[user_input].get("is_admin", False)
-                        st.session_state["pwd_key_login"] = str(uuid.uuid4()) # 重置key
+                        st.session_state["pwd_key_login"] = str(uuid.uuid4())
                         st.success("登录成功！正在进入系统...")
                         st.rerun()
             
@@ -152,23 +137,15 @@ def render_auth_page():
                         st.session_state["pwd_key_reg2"] = str(uuid.uuid4())
                         st.success(f"🎉 账号 [{new_user}] 注册成功！请等待管理员审批后登录。")
                         
-            else: # 忘记密码
+            else:
                 st.warning("⚠️ **系统安全策略提示**")
-                st.markdown("""
-                由于本系统为内部受控软件，出于数据安全考量，未接入自动发送邮件找回功能。
-                
-                如果您忘记了密码，请执行以下操作：
-                1. 联系您的 **系统管理员 (Admin)**。
-                2. 提供您的用户名，请求管理员在后台为您 **强制重置密码**。
-                3. 获取新密码后，使用新密码登录，并在左侧菜单自行修改。
-                """)
+                st.markdown("""由于本系统为内部受控软件，如果您忘记了密码，请联系您的 **系统管理员 (Admin)** 执行强制重置。""")
 
-# 拦截：如果未登录，则只显示登录/注册界面并停止运行后续代码
 if not st.session_state["logged_in"]:
     render_auth_page()
     st.stop()
 
-# ==================== 4. 辅助函数与模型逻辑 ====================
+# ==================== 4. 辅助函数 ====================
 def safe_float(val):
     if pd.isna(val): return 0.0
     try: return float(val)
@@ -188,15 +165,86 @@ def calc_weighted_error(c1, c2, weights=(1.0, 2.0, 2.0)):
     w = np.array(weights)
     return np.sqrt(np.sum((diff * w)**2))
 
-def format_dict(d):
-    return str(d) if d else "{}"
-
 def dict_to_dataframe(d, col_name="用量"):
     if not d: return pd.DataFrame(columns=["材料名称", col_name])
     df = pd.DataFrame(list(d.items()), columns=["材料名称", col_name])
     df[col_name] = df[col_name].apply(lambda x: f"{x:g}")
     return df
 
+# ==================== 5. ★ 纯原生 Excel 极速解析 (无需 AI 模型) ★ ====================
+@st.cache_data(show_spinner=False)
+def load_raw_recipes_from_excel(file_path):
+    """直接解析 Excel，提供给极速检索功能，完全不依赖机器学习库"""
+    if not os.path.exists(file_path):
+        return None
+    try:
+        df = pd.read_excel(file_path, sheet_name=0)
+        df.columns = df.columns.str.strip()
+    except Exception:
+        return None
+
+    base_cols = [(f'底料{i}', f'底料{i}数量') for i in range(1, 11)]
+    add_cols = [(f'配料{i}', f'配料{i}数量') for i in range(1, 8)]
+
+    raw_recipes = []
+    for _, row in df.iterrows():
+        date_val = row.get('日期', '')
+        if pd.isna(date_val): continue
+        date_str = str(int(date_val)) if isinstance(date_val, (int, float)) else str(date_val)
+        
+        series_val = row.get('册列', '无')
+        if pd.isna(series_val) or str(series_val).strip() in ('', 'nan', 'None'):
+            series_str = "无"
+        else:
+            try:
+                if isinstance(series_val, (int, float)): series_str = str(int(series_val))
+                else:
+                    series_str = str(series_val).strip()
+                    if series_str.endswith('.0') and series_str[:-2].isdigit(): series_str = series_str[:-2]
+            except: series_str = str(series_val).strip()
+
+        depth, red_blue, yellow_green = row.get('深浅'), row.get('红蓝'), row.get('黄绿')
+        if pd.isna(depth) or pd.isna(red_blue) or pd.isna(yellow_green): continue
+        
+        bases, additives = {}, {}
+        for name_col, qty_col in base_cols:
+            name, qty = row.get(name_col), safe_float(row.get(qty_col))
+            if pd.notna(name) and str(name).strip() not in ('无', ''): bases[str(name).strip()] = qty
+        for name_col, qty_col in add_cols:
+            name, qty = row.get(name_col), safe_float(row.get(qty_col))
+            if pd.notna(name) and str(name).strip() not in ('无', ''): additives[str(name).strip()] = qty
+                
+        raw_recipes.append({
+            'date': date_str, 'series': series_str, 'bases': bases, 
+            'additives': additives, 'color': (float(depth), float(red_blue), float(yellow_green))
+        })
+    return raw_recipes
+
+def search_history_direct_fast(target_depth, target_red_blue, target_yellow_green, k=5):
+    """纯数学计算距离，脱离 AI 核心"""
+    raw_recipes = load_raw_recipes_from_excel(DATA_FILE_PATH)
+    if not raw_recipes: return None
+    
+    target_color = np.array([target_depth, target_red_blue, target_yellow_green])
+    results = []
+    
+    for rec in raw_recipes:
+        hist_color = np.array(rec['color'])
+        # 计算纯欧氏距离 (色差)
+        dist = np.linalg.norm(hist_color - target_color)
+        results.append({
+            'date': rec['date'],
+            'series': rec['series'],
+            'history_bases': rec['bases'],
+            'history_additives': rec['additives'],
+            'history_color': rec['color'],
+            'color_distance': dist
+        })
+        
+    results.sort(key=lambda x: x['color_distance'])
+    return results[:k]
+
+# ==================== 6. AI 模型初始化及训练逻辑 ====================
 @st.cache_resource
 def get_model_state():
     return {
@@ -210,60 +258,12 @@ def get_model_state():
 ms = get_model_state()
 
 def train_and_save_models():
-    try: 
-        df = pd.read_excel(DATA_FILE_PATH, sheet_name=0)
-        # ⚠️ 强力清洗表头：去除所有的首尾空格，防止 "册列 " 匹配不到 "册列"
-        df.columns = df.columns.str.strip()
-    except FileNotFoundError: 
-        return False, f"找不到文件: {DATA_FILE_PATH}，请检查路径。"
-
-    base_cols = [(f'底料{i}', f'底料{i}数量') for i in range(1, 11)]
-    add_cols = [(f'配料{i}', f'配料{i}数量') for i in range(1, 8)]
-
-    ms['recipes'].clear()
-    for _, row in df.iterrows():
-        # 获取日期
-        date_val = row.get('日期', '')
-        if pd.isna(date_val): continue
-        date_str = str(int(date_val)) if isinstance(date_val, (int, float)) else str(date_val)
-        
-        # ⚠️ 获取并清洗册列数据 (处理浮点数读成 6.0 的情况，或者空值)
-        series_val = row.get('册列', '无')
-        if pd.isna(series_val) or str(series_val).strip() in ('', 'nan', 'None'):
-            series_str = "无"
-        else:
-            try:
-                # 如果是纯数字类型
-                if isinstance(series_val, (int, float)):
-                    series_str = str(int(series_val))
-                else:
-                    series_str = str(series_val).strip()
-                    # 如果是字符串形式的浮点数，比如 "6.0"
-                    if series_str.endswith('.0') and series_str[:-2].isdigit():
-                        series_str = series_str[:-2]
-            except:
-                series_str = str(series_val).strip()
-
-        depth, red_blue, yellow_green = row.get('深浅'), row.get('红蓝'), row.get('黄绿')
-        if pd.isna(depth) or pd.isna(red_blue) or pd.isna(yellow_green): continue
-        
-        bases, additives = {}, {}
-        for name_col, qty_col in base_cols:
-            name, qty = row.get(name_col), safe_float(row.get(qty_col))
-            if pd.notna(name) and str(name).strip() not in ('无', ''): bases[str(name).strip()] = qty
-        for name_col, qty_col in add_cols:
-            name, qty = row.get(name_col), safe_float(row.get(qty_col))
-            if pd.notna(name) and str(name).strip() not in ('无', ''): additives[str(name).strip()] = qty
-                
-        # 存入历史配方
-        ms['recipes'].append({
-            'date': date_str, 
-            'series': series_str,  # 已经洗净的册列字段
-            'bases': bases, 
-            'additives': additives, 
-            'color': (float(depth), float(red_blue), float(yellow_green))
-        })
-
+    # 强制重新读取 Excel 以供 AI 训练
+    raw_data = load_raw_recipes_from_excel(DATA_FILE_PATH)
+    if not raw_data: return False, f"找不到数据文件或格式错误: {DATA_FILE_PATH}"
+    
+    ms['recipes'] = raw_data
+    
     base_count = defaultdict(int)
     for rec in ms['recipes']:
         for b in rec['bases']: base_count[b] += 1
@@ -296,7 +296,6 @@ def train_and_save_models():
             
     median_rb = np.median(X_color[:, 1])
     red_group, blue_group = X_color[:, 1] > median_rb, X_color[:, 1] < median_rb
-    
     for a in ms['all_additives']:
         if a in ms['red_additives'] or a in ms['blue_additives']: continue
         y = ms['Y_add'][:, ms['add_to_idx'][a]]
@@ -379,7 +378,6 @@ def train_and_save_models():
 def load_models():
     if not os.path.exists(MODEL_FILE_PATH): 
         return False, f"未找到模型文件。请先点击【从云端拉取大模型】下载。"
-            
     try:
         model_state = joblib.load(MODEL_FILE_PATH)
         for k, v in model_state.items(): ms[k] = v
@@ -387,6 +385,7 @@ def load_models():
         return True, f"模型加载成功！共载入 {len(ms['recipes'])} 条历史配方。"
     except Exception as e: return False, f"加载模型失败: {e}"
 
+# ==== 下面是只有加载AI大模型后才能用的推演预测逻辑 ====
 def predict_color(base_dict, add_dict):
     base_abs = np.zeros(ms['n_bases'])
     for b, qty in base_dict.items():
@@ -463,10 +462,8 @@ def optimize_additives_high_precision(target_color, base_dict, initial_additives
     def deep_steepest_descent(d):
         temp = d.copy()
         current_e = get_err(temp)
-        if apply_penalty:
-            step_sizes = [0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001]
-        else:
-            step_sizes = [0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005]
+        if apply_penalty: step_sizes = [0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001]
+        else: step_sizes = [0.5, 0.2, 0.1, 0.05, 0.02, 0.01, 0.005, 0.002, 0.001, 0.0005]
         
         for step in step_sizes:
             improved = True
@@ -483,8 +480,7 @@ def optimize_additives_high_precision(target_color, base_dict, initial_additives
                             test_d = temp.copy()
                             test_d[k] = new_val
                             e = get_err(test_d)
-                            if e < best_e - 1e-6:
-                                best_e, best_temp = e, test_d
+                            if e < best_e - 1e-6: best_e, best_temp = e, test_d
 
                 for i in range(len(keys)):
                     for j in range(i + 1, len(keys)):
@@ -496,8 +492,7 @@ def optimize_additives_high_precision(target_color, base_dict, initial_additives
                                     test_d = temp.copy()
                                     test_d[k1], test_d[k2] = v1, v2
                                     e = get_err(test_d)
-                                    if e < best_e - 1e-6:
-                                        best_e, best_temp = e, test_d
+                                    if e < best_e - 1e-6: best_e, best_temp = e, test_d
                                         
                 if best_temp is not None:
                     temp = best_temp
@@ -526,8 +521,7 @@ def optimize_additives_high_precision(target_color, base_dict, initial_additives
                     test = best_dict.copy()
                     test[a] = 0.02 
                     e = get_err(test)
-                    if e < best_new_err:
-                        best_new_err, best_new_a = e, a
+                    if e < best_new_err: best_new_err, best_new_a = e, a
                 if best_new_a:
                     test = best_dict.copy()
                     test[best_new_a] = 0.02
@@ -538,10 +532,8 @@ def optimize_additives_high_precision(target_color, base_dict, initial_additives
 
     final_dict = {}
     for k, v in best_dict.items():
-        if lock_types and k in initial_additives:
-            final_dict[k] = round(max(0.001, v), 3) 
-        elif v >= 0.001:
-            final_dict[k] = round(v, 3)
+        if lock_types and k in initial_additives: final_dict[k] = round(max(0.001, v), 3) 
+        elif v >= 0.001: final_dict[k] = round(v, 3)
 
     return final_dict, predict_color(base_dict, final_dict)
 
@@ -596,27 +588,21 @@ def recommend_single(target_depth, target_red_blue, target_yellow_green, k=3, co
             final_error = np.abs(np.array(opt_color) - target_color)
             
         results.append({
-            'date': rec['date'],
-            'series': rec.get('series', '无'), # 兼容并获取册列
-            'history_bases': rec['bases'],
-            'history_additives': rec['additives'],
-            'history_color': rec['color'],
-            'initial_additives': initial_additives,
-            'init_type': init_type,
-            'optimized_additives': opt_additives,
-            'optimized_color': tuple(opt_color),
-            'final_error': final_error,
-            'distance': distances[0][list(indices[0]).index(idx)],
-            'color_distance': color_dist
+            'date': rec['date'], 'series': rec.get('series', '无'),
+            'history_bases': rec['bases'], 'history_additives': rec['additives'],
+            'history_color': rec['color'], 'initial_additives': initial_additives,
+            'init_type': init_type, 'optimized_additives': opt_additives,
+            'optimized_color': tuple(opt_color), 'final_error': final_error,
+            'distance': distances[0][list(indices[0]).index(idx)], 'color_distance': color_dist
         })
     results.sort(key=lambda x: x['color_distance'])
     return results
 
-# ==================== 5. 侧边栏：控制台与模型加载 ====================
+
+# ==================== 7. 侧边栏：控制台与模型加载 ====================
 with st.sidebar:
     st.success(f"👤 欢迎回来：**{st.session_state['username']}**")
     
-    # ---------------- 所有人都能用的修改密码功能 ----------------
     with st.expander("⚙️ 修改我的密码"):
         old_pwd = st.text_input("当前密码", type="password", key=st.session_state["pwd_key_old"], autocomplete="new-password")
         new_pwd = st.text_input("新密码", type="password", key=st.session_state["pwd_key_new1"], autocomplete="new-password")
@@ -626,16 +612,12 @@ with st.sidebar:
             users_db = load_users()
             current_user = st.session_state["username"]
             
-            if not old_pwd or not new_pwd:
-                st.error("请完整填写所有密码项！")
-            elif users_db[current_user]["password"] != hash_password(old_pwd):
-                st.error("❌ 当前旧密码输入错误！")
-            elif new_pwd != new_pwd_confirm:
-                st.error("❌ 两次输入的新密码不一致！")
+            if not old_pwd or not new_pwd: st.error("请完整填写所有密码项！")
+            elif users_db[current_user]["password"] != hash_password(old_pwd): st.error("❌ 当前旧密码输入错误！")
+            elif new_pwd != new_pwd_confirm: st.error("❌ 两次输入的新密码不一致！")
             else:
                 users_db[current_user]["password"] = hash_password(new_pwd)
                 save_users(users_db)
-                # 修改成功后重置输入框ID防止记忆残留
                 st.session_state["pwd_key_old"] = str(uuid.uuid4())
                 st.session_state["pwd_key_new1"] = str(uuid.uuid4())
                 st.session_state["pwd_key_new2"] = str(uuid.uuid4())
@@ -648,21 +630,18 @@ with st.sidebar:
         st.session_state["pwd_key_login"] = str(uuid.uuid4())
         st.rerun()
         
-    # ================= 管理员专属控制面板 =================
     if st.session_state["is_admin"]:
         st.markdown("---")
         st.markdown("### 👑 管理员控制台")
         
-        # 模块A：账号审核
         with st.container(border=True):
             st.markdown("#### 📝 账号审核")
             users_db = load_users()
             pending_users = [u for u, d in users_db.items() if not d.get("is_approved", False)]
             
-            if not pending_users:
-                st.info("✅ 当前无待审核账号")
+            if not pending_users: st.info("✅ 当前无待审核账号")
             else:
-                st.warning(f"🔔 有 {len(pending_users)} 个新账号等待批准")
+                st.warning(f"🔔 有 {len(pending_users)} 个等待批准")
                 for pu in pending_users:
                     col_a, col_b = st.columns([2, 1])
                     with col_a: st.write(f"**{pu}**")
@@ -672,10 +651,9 @@ with st.sidebar:
                             save_users(users_db)
                             st.rerun()
                             
-        # 模块B：重置其他人密码 (管理员特权)
         st.write("")
         with st.container(border=True):
-            st.markdown("#### 🔑 强制重置密码 (用户忘记密码)")
+            st.markdown("#### 🔑 强制重置密码")
             users_db = load_users()
             all_usernames = list(users_db.keys())
             
@@ -683,15 +661,13 @@ with st.sidebar:
             admin_new_pwd = st.text_input("为该用户设置新密码", type="password", key=st.session_state["pwd_key_admin_reset"], autocomplete="new-password")
             
             if st.button("⚠️ 执行重置", type="primary", use_container_width=True):
-                if not admin_new_pwd:
-                    st.error("请输入新密码！")
+                if not admin_new_pwd: st.error("请输入新密码！")
                 else:
                     users_db[user_to_reset]["password"] = hash_password(admin_new_pwd)
                     save_users(users_db)
                     st.session_state["pwd_key_admin_reset"] = str(uuid.uuid4())
                     st.success(f"✅ 已成功将账号 **[{user_to_reset}]** 的密码强制重置！")
 
-        # 模块C：模型管理（只有管理员可见）
         st.write("")
         st.markdown("#### ⚙️ AI 模型核心管理")
         with st.container(border=True):
@@ -717,260 +693,322 @@ with st.sidebar:
                     if success: st.success(msg)
                     else: st.error(msg)
                             
-    # ================= 所有人可见的系统运行状态 =================
     st.markdown("---")
     st.image("https://cdn-icons-png.flaticon.com/512/3003/3003054.png", width=60)
     if ms['is_loaded']:
         st.success("🟢 核心大模型已就绪")
-        st.caption("🔥 高精推演引擎运转中，可随时使用。")
+        st.caption("🔥 高精推演引擎运转中，可随时使用全部功能。")
     else: 
         st.warning("🔴 模型尚未启动或未部署")
 
-# ==================== 5.5 如果模型未加载，拦截并提示 ====================
-if not ms['is_loaded']:
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    if st.session_state["is_admin"]:
-        st.info("👈 **管理员提示：** 当前 AI 模型未处于工作状态。请在左侧侧边栏【AI 模型核心管理】区域点击 **[启动/加载本地模型]**。如果本地缺少模型文件，请先点击 **[从云端强制拉取]**。")
-    else:
-        st.error("⚠️ **系统拦截：** AI 核心推理模型当前尚未启动加载，系统暂时无法提供配色计算服务。请耐心等待，或联系管理员（admin）登录后台进行模型初始化部署。")
-    st.stop() # 阻断下方主界面的渲染
 
-# ==================== 6. 主界面业务 Tabs (模型加载后可见) ====================
-tab1, tab2, tab3, tab4 = st.tabs([
-    "💡 方案大厅 (智能推荐)", 
-    "🔬 调色实验室 (配方微调)", 
-    "🪄 全新配方推导 (底料+目标色)", 
-    "🔮 色值正向预测 (底料+配料)"
+# ==================== 8. 主界面业务 Tabs ====================
+
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    "⚡ 极速查历史 (纯检索)", 
+    "💡 方案大厅 (AI智能推荐)", 
+    "🔬 调色实验室 (AI配方微调)", 
+    "🪄 全新配方推导 (AI底料+目标色)", 
+    "🔮 色值正向预测 (AI物理反射测算)"
 ])
 
-# ================= Tab 1: 智能推荐 =================
+# ================= Tab 1: 极速历史查询 (直接读取Excel，不需要AI模型) =================
 with tab1:
-    st.markdown("### 根据目标颜色寻找并推荐最佳配方")
+    st.markdown("### ⚡ 直接从历史数据库中匹配出最相近的配方（不调用AI模型，速度最快）")
     with st.container(border=True):
         col1, col2, col3, col4 = st.columns([1,1,1,1])
-        with col1: target_d = st.number_input("🌑 深浅目标值", value=49.0, step=0.1, key="t1_d")
-        with col2: target_rb = st.number_input("🔴 红蓝目标值", value=6.0, step=0.1, key="t1_rb")
-        with col3: target_yg = st.number_input("🟢 黄绿目标值", value=9.0, step=0.1, key="t1_yg")
+        with col1: target_d_fast = st.number_input("🌑 深浅目标值", value=49.0, step=0.1, key="fast_d")
+        with col2: target_rb_fast = st.number_input("🔴 红蓝目标值", value=6.0, step=0.1, key="fast_rb")
+        with col3: target_yg_fast = st.number_input("🟢 黄绿目标值", value=9.0, step=0.1, key="fast_yg")
         with col4:
             st.write("")
             st.write("")
-            btn_search = st.button("🔍 开始高精智能推荐", type="primary", use_container_width=True)
-    
-    if btn_search:
-        with st.spinner("正在执行多维计算，逼近极限精度..."):
-            results = recommend_single(target_d, target_rb, target_yg, k=3, color_threshold=6.0)
-            st.markdown(f"#### 🎯 目标颜色: 深浅=`{target_d:.2f}`, 红蓝=`{target_rb:.2f}`, 黄绿=`{target_yg:.2f}`")
-            st.markdown(f"推荐 {len(results)} 个历史底料组合，配料种类 ≤5:\n")
+            btn_fast_search = st.button("⚡ 立即极速检索", type="primary", use_container_width=True)
             
-            for i, res in enumerate(results, 1):
+    if btn_fast_search:
+        fast_results = search_history_direct_fast(target_d_fast, target_rb_fast, target_yg_fast, k=5)
+        
+        if fast_results is None:
+            st.error(f"❌ 找不到数据文件 `{DATA_FILE_PATH}`！请确保数据源文件与代码在同一文件夹内。")
+        elif len(fast_results) == 0:
+            st.warning("未匹配到任何有效的历史配方数据，请检查 Excel 格式是否正确。")
+        else:
+            st.success(f"✅ 检索完成！为您直接找到 {len(fast_results)} 个颜色最相近的历史配方：")
+            
+            for i, res in enumerate(fast_results, 1):
                 with st.container(border=True):
-                    st.markdown(f"### 🌟 推荐方案 {i} <span style='font-size: 14px; color: #888;'> (历史颜色距离 = {res['color_distance']:.4f}, KNN距离 = {res['distance']:.4f})</span>", unsafe_allow_html=True)
+                    st.markdown(f"### 📖 历史原单 {i} <span style='font-size: 14px; color: #888;'> (纯色差距离 = {res['color_distance']:.4f})</span>", unsafe_allow_html=True)
                     st.write("")
                     
-                    rc1, rc2 = st.columns(2)
+                    st.markdown(f"**【册列】：** <span style='color:red; font-size:18px; font-weight:bold;'>{res['series']}</span> &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}", unsafe_allow_html=True)
+                    
+                    rc1, rc2, rc3 = st.columns(3)
                     with rc1:
-                        st.markdown("<div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:10px;'>📜 <b>历史配方数据 (基准参考)</b></div>", unsafe_allow_html=True)
-                        st.markdown(f"**【册列】：** <span style='color:red; font-size:18px; font-weight:bold;'>{res['series']}</span> &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}", unsafe_allow_html=True)
-                        
-                        st.write("**历史底料:**")
+                        st.write("**📦 历史底料:**")
                         if res['history_bases']: st.dataframe(dict_to_dataframe(res['history_bases']), hide_index=True, use_container_width=True)
                         else: st.markdown("无")
                         
-                        st.write("**历史配料:**")
+                    with rc2:
+                        st.write("**🧪 历史配料:**")
                         if res['history_additives']: st.dataframe(dict_to_dataframe(res['history_additives']), hide_index=True, use_container_width=True)
                         else: st.markdown("无")
                         
-                        st.write("**历史呈现颜色:**")
-                        cc1, cc2, cc3 = st.columns(3)
-                        cc1.metric("深浅", f"{res['history_color'][0]:.2f}")
-                        cc2.metric("红蓝", f"{res['history_color'][1]:.2f}")
-                        cc3.metric("黄绿", f"{res['history_color'][2]:.2f}")
+                    with rc3:
+                        st.write("**🎯 历史呈现颜色:**")
+                        c_d, c_rb, c_yg = res['history_color']
                         
-                    with rc2:
-                        st.markdown("<div style='background-color:#e8f5e9; padding:10px; border-radius:5px; margin-bottom:10px;'>✨ <b>AI 高精度矩阵优化配方 (实际使用)</b></div>", unsafe_allow_html=True)
-                        st.caption(f"**初始配料来源:** {res['init_type']}")
-                        
-                        st.write("**初始配料:**")
-                        if res['initial_additives']: st.dataframe(dict_to_dataframe(res['initial_additives']), hide_index=True, use_container_width=True)
-                        else: st.markdown("无")
-                        
-                        st.write("**最终配料 (≤5种):**")
-                        if res['optimized_additives']: st.dataframe(dict_to_dataframe(res['optimized_additives'], col_name="AI推荐用量"), hide_index=True, use_container_width=True)
-                        else: st.markdown("无")
-                        
-                        st.write("**优化后预测颜色:**")
-                        cc1, cc2, cc3 = st.columns(3)
-                        if "无需预测" in res['init_type']:
-                            cc1.metric("深浅", f"{res['optimized_color'][0]:.2f}")
-                            cc2.metric("红蓝", f"{res['optimized_color'][1]:.2f}")
-                            cc3.metric("黄绿", f"{res['optimized_color'][2]:.2f}")
-                        else:
-                            cc1.metric("深浅", f"{res['optimized_color'][0]:.2f}", f"Δ {res['final_error'][0]:.2f}", delta_color="off")
-                            cc2.metric("红蓝", f"{res['optimized_color'][1]:.2f}", f"Δ {res['final_error'][1]:.2f}", delta_color="off")
-                            cc3.metric("黄绿", f"{res['optimized_color'][2]:.2f}", f"Δ {res['final_error'][2]:.2f}", delta_color="off")
-                st.write("")
+                        st.metric("深浅", f"{c_d:.2f}", delta=f"偏离目标 {c_d - target_d_fast:.2f}", delta_color="off")
+                        st.metric("红蓝", f"{c_rb:.2f}", delta=f"偏离目标 {c_rb - target_rb_fast:.2f}", delta_color="off")
+                        st.metric("黄绿", f"{c_yg:.2f}", delta=f"偏离目标 {c_yg - target_yg_fast:.2f}", delta_color="off")
 
-# ================= Tab 2: 增量微调 =================
+
+# ================= 注意：后续四个 Tab 依赖 AI 模型 =================
+def render_model_block_alert():
+    st.markdown("<br>", unsafe_allow_html=True)
+    st.error("⚠️ **系统拦截：AI 核心大模型当前尚未启动！**")
+    if st.session_state["is_admin"]:
+        st.info("👈 **管理员提示：** 请在左侧侧边栏【AI 模型核心管理】区域点击 **[启动/加载本地模型]**。")
+    else:
+        st.info("请联系管理员登录后台进行模型初始化部署，或者稍后再试。")
+
+# ================= Tab 2: 智能推荐 =================
 with tab2:
-    st.markdown("### 在现有配方基础上进行高精度微调")
-    with st.container(border=True):
-        base_str = st.text_input("📦 请输入底料 (格式要求: 名称:数量,用逗号隔开)", placeholder="例: 三色:1475, 中灰:525", key="t2_base")
-        add_str = st.text_input("🧪 请输入当前已有配料 (格式要求: 名称:数量,用逗号隔开)", placeholder="例: R03:0.15, 304#黄:0.1, 9010:20", key="t2_add")
-        
-        st.write("🎯 设定目标颜色：")
-        col1, col2, col3 = st.columns(3)
-        with col1: t_d = st.number_input("目标深浅", value=48.4, step=0.1, key="t2_d")
-        with col2: t_rb = st.number_input("目标红蓝", value=5.61, step=0.1, key="t2_rb")
-        with col3: t_yg = st.number_input("目标黄绿", value=8.47, step=0.1, key="t2_yg")
-        
-        btn_opt = st.button("⚡ 极限高精度优化", type="primary", use_container_width=True, key="t2_btn")
-    
-    if btn_opt:
-        if not base_str:
-            st.error("底料分布不可为空！")
-        else:
-            base_dict = parse_dict_from_string(base_str)
-            add_dict = parse_dict_from_string(add_str)
-            target = (t_d, t_rb, t_yg)
-            
-            with st.spinner("正在进行对角线联动评估，这可能需要几秒钟时间..."):
-                current_color_pred = predict_color(base_dict, add_dict)
-                color_diff = np.linalg.norm(np.array(current_color_pred) - np.array(target))
-                
-                lock_types = False
-                if color_diff <= 1.0:
-                    st.info(f"🔍 **[评估]** 当前初始配方与目标颜色的色差预测为 **{color_diff:.2f} (≤ 1.0)**\n\n**[策略]** 触发锁定模式：仅在【原配料基础】上微调数量，不引入新配料，不剔除旧配料。")
-                    lock_types = True
-                else:
-                    st.warning(f"🔍 **[评估]** 当前初始配方与目标颜色的色差预测为 **{color_diff:.2f} (> 1.0)**\n\n**[策略]** 允许引入新配料或剔除无效配料，进行全局增量优化。")
-                
-                best_add, best_color = optimize_additives_high_precision(
-                    target, base_dict, add_dict, max_additives=5, allow_type_change=True, lock_types=lock_types
-                )
-                increments = compute_increments(add_dict, best_add)
-                error = np.abs(np.array(best_color) - np.array(target))
-                
-                st.markdown("---")
-                st.markdown("### 🏆 优化结果 (高精矩阵版)")
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("最终预测 深浅", f"{best_color[0]:.2f}", f"偏离 {error[0]:.2f}", delta_color="off")
-                c2.metric("最终预测 红蓝", f"{best_color[1]:.2f}", f"偏离 {error[1]:.2f}", delta_color="off")
-                c3.metric("最终预测 黄绿", f"{best_color[2]:.2f}", f"偏离 {error[2]:.2f}", delta_color="off")
+    if not ms['is_loaded']:
+        render_model_block_alert()
+    else:
+        st.markdown("### 💡 根据目标颜色寻找并推荐最佳配方 (经过 AI 矩阵推演)")
+        with st.container(border=True):
+            col1, col2, col3, col4 = st.columns([1,1,1,1])
+            with col1: target_d = st.number_input("🌑 深浅目标值", value=49.0, step=0.1, key="t1_d")
+            with col2: target_rb = st.number_input("🔴 红蓝目标值", value=6.0, step=0.1, key="t1_rb")
+            with col3: target_yg = st.number_input("🟢 黄绿目标值", value=9.0, step=0.1, key="t1_yg")
+            with col4:
                 st.write("")
-
-                rc1, rc2 = st.columns(2)
-                with rc1:
+                st.write("")
+                btn_search = st.button("🔍 开始高精智能推荐", type="primary", use_container_width=True)
+        
+        if btn_search:
+            with st.spinner("正在执行多维计算，逼近极限精度..."):
+                results = recommend_single(target_d, target_rb, target_yg, k=3, color_threshold=6.0)
+                st.markdown(f"#### 🎯 目标颜色: 深浅=`{target_d:.2f}`, 红蓝=`{target_rb:.2f}`, 黄绿=`{target_yg:.2f}`")
+                st.markdown(f"推荐 {len(results)} 个历史底料组合，配料种类 ≤5:\n")
+                
+                for i, res in enumerate(results, 1):
                     with st.container(border=True):
-                        st.markdown("#### 📝 建议的【最终配料用量】")
-                        if not best_add:
-                            st.write("无需任何配料")
-                        else:
-                            st.dataframe(dict_to_dataframe(best_add, col_name="目标克数"), hide_index=True, use_container_width=True)
-                            
-                        add_str_new = ','.join([f"{k}:{v:g}" for k,v in best_add.items()])
-                        st.text_input("🔗 可直接复制的最终配料字符串:", value=add_str_new, key="t2_copy")
+                        st.markdown(f"### 🌟 推荐方案 {i} <span style='font-size: 14px; color: #888;'> (历史颜色距离 = {res['color_distance']:.4f}, KNN距离 = {res['distance']:.4f})</span>", unsafe_allow_html=True)
+                        st.write("")
                         
-                with rc2:
-                    with st.container(border=True):
-                        st.markdown("#### 🛠 需要【额外操作的动作】")
-                        if not increments:
-                            st.markdown("<div class='success-text'>🎉 保持当前配料不变</div>", unsafe_allow_html=True)
-                        else:
-                            for a, inc in increments.items():
-                                if inc > 0:
-                                    if a not in add_dict:
-                                        st.markdown(f"<div class='success-text'>➕ <b>{a}</b>: 增加 {inc:g} (新增配料)</div>", unsafe_allow_html=True)
-                                    else:
-                                        st.markdown(f"<div class='success-text'>📈 <b>{a}</b>: 增加 {inc:g}</div>", unsafe_allow_html=True)
-                                elif inc < 0:
-                                    if best_add.get(a, 0) == 0:
-                                        st.markdown(f"<div class='error-text'>❌ <b>{a}</b>: 减少 {-inc:g} (完全剔除)</div>", unsafe_allow_html=True)
-                                    else:
-                                        st.markdown(f"<div class='warning-text'>📉 <b>{a}</b>: 减少 {-inc:g}</div>", unsafe_allow_html=True)
+                        rc1, rc2 = st.columns(2)
+                        with rc1:
+                            st.markdown("<div style='background-color:#f0f2f6; padding:10px; border-radius:5px; margin-bottom:10px;'>📜 <b>历史配方数据 (基准参考)</b></div>", unsafe_allow_html=True)
+                            st.markdown(f"**【册列】：** <span style='color:red; font-size:18px; font-weight:bold;'>{res['series']}</span> &nbsp;&nbsp;|&nbsp;&nbsp; **日期:** {res['date']}", unsafe_allow_html=True)
+                            
+                            st.write("**历史底料:**")
+                            if res['history_bases']: st.dataframe(dict_to_dataframe(res['history_bases']), hide_index=True, use_container_width=True)
+                            else: st.markdown("无")
+                            
+                            st.write("**历史配料:**")
+                            if res['history_additives']: st.dataframe(dict_to_dataframe(res['history_additives']), hide_index=True, use_container_width=True)
+                            else: st.markdown("无")
+                            
+                            st.write("**历史呈现颜色:**")
+                            cc1, cc2, cc3 = st.columns(3)
+                            cc1.metric("深浅", f"{res['history_color'][0]:.2f}")
+                            cc2.metric("红蓝", f"{res['history_color'][1]:.2f}")
+                            cc3.metric("黄绿", f"{res['history_color'][2]:.2f}")
+                            
+                        with rc2:
+                            st.markdown("<div style='background-color:#e8f5e9; padding:10px; border-radius:5px; margin-bottom:10px;'>✨ <b>AI 高精度矩阵优化配方 (实际使用)</b></div>", unsafe_allow_html=True)
+                            st.caption(f"**初始配料来源:** {res['init_type']}")
+                            
+                            st.write("**初始配料:**")
+                            if res['initial_additives']: st.dataframe(dict_to_dataframe(res['initial_additives']), hide_index=True, use_container_width=True)
+                            else: st.markdown("无")
+                            
+                            st.write("**最终配料 (≤5种):**")
+                            if res['optimized_additives']: st.dataframe(dict_to_dataframe(res['optimized_additives'], col_name="AI推荐用量"), hide_index=True, use_container_width=True)
+                            else: st.markdown("无")
+                            
+                            st.write("**优化后预测颜色:**")
+                            cc1, cc2, cc3 = st.columns(3)
+                            if "无需预测" in res['init_type']:
+                                cc1.metric("深浅", f"{res['optimized_color'][0]:.2f}")
+                                cc2.metric("红蓝", f"{res['optimized_color'][1]:.2f}")
+                                cc3.metric("黄绿", f"{res['optimized_color'][2]:.2f}")
+                            else:
+                                cc1.metric("深浅", f"{res['optimized_color'][0]:.2f}", f"Δ {res['final_error'][0]:.2f}", delta_color="off")
+                                cc2.metric("红蓝", f"{res['optimized_color'][1]:.2f}", f"Δ {res['final_error'][1]:.2f}", delta_color="off")
+                                cc3.metric("黄绿", f"{res['optimized_color'][2]:.2f}", f"Δ {res['final_error'][2]:.2f}", delta_color="off")
+                    st.write("")
 
-# ================= Tab 3: 全新配方推导 =================
+# ================= Tab 3: 增量微调 =================
 with tab3:
-    st.markdown("### 给出已知底料与目标颜色，从零推导所需配料")
-    with st.container(border=True):
-        base_str3 = st.text_input("📦 请输入底料 (如: 三色:1475, 中灰:525)", placeholder="必填，用逗号隔开", key="t3_base")
-        
-        st.write("🎯 设定目标颜色：")
-        col1, col2, col3 = st.columns(3)
-        with col1: t3_d = st.number_input("目标深浅", value=48.4, step=0.1, key="t3_d")
-        with col2: t3_rb = st.number_input("目标红蓝", value=5.61, step=0.1, key="t3_rb")
-        with col3: t3_yg = st.number_input("目标黄绿", value=8.47, step=0.1, key="t3_yg")
-        
-        btn_pred_add = st.button("🪄 一键推导极优配料 (深度双向搜索)", type="primary", use_container_width=True, key="t3_btn")
-    
-    if btn_pred_add:
-        if not base_str3:
-            st.error("请输入底层材料组合！")
-        else:
-            base_dict3 = parse_dict_from_string(base_str3)
-            target3 = (t3_d, t3_rb, t3_yg)
+    if not ms['is_loaded']:
+        render_model_block_alert()
+    else:
+        st.markdown("### 🔬 在现有配方基础上进行 AI 高精度微调")
+        with st.container(border=True):
+            base_str = st.text_input("📦 请输入底料 (格式要求: 名称:数量,用逗号隔开)", placeholder="例: 三色:1475, 中灰:525", key="t2_base")
+            add_str = st.text_input("🧪 请输入当前已有配料 (格式要求: 名称:数量,用逗号隔开)", placeholder="例: R03:0.15, 304#黄:0.1, 9010:20", key="t2_add")
             
-            with st.spinner("系统正在进行双通道并发寻优，无视常识枷锁逼近极致误差..."):
-                guess1 = predict_new_additives(target3, base_dict3, max_additives=5)
-                res1_add, res1_col = optimize_additives_high_precision(
-                    target3, base_dict3, guess1, max_additives=5, allow_type_change=True, lock_types=False, apply_penalty=False
-                )
-                err1 = calc_weighted_error(res1_col, target3)
+            st.write("🎯 设定目标颜色：")
+            col1, col2, col3 = st.columns(3)
+            with col1: t_d = st.number_input("目标深浅", value=48.4, step=0.1, key="t2_d")
+            with col2: t_rb = st.number_input("目标红蓝", value=5.61, step=0.1, key="t2_rb")
+            with col3: t_yg = st.number_input("目标黄绿", value=8.47, step=0.1, key="t2_yg")
+            
+            btn_opt = st.button("⚡ 极限高精度优化", type="primary", use_container_width=True, key="t2_btn")
+        
+        if btn_opt:
+            if not base_str:
+                st.error("底料分布不可为空！")
+            else:
+                base_dict = parse_dict_from_string(base_str)
+                add_dict = parse_dict_from_string(add_str)
+                target = (t_d, t_rb, t_yg)
                 
-                res2_add, res2_col = optimize_additives_high_precision(
-                    target3, base_dict3, {}, max_additives=5, allow_type_change=True, lock_types=False, apply_penalty=False
-                )
-                err2 = calc_weighted_error(res2_col, target3)
-                
-                if err1 <= err2:
-                    best_add3, best_color3 = res1_add, res1_col
-                else:
-                    best_add3, best_color3 = res2_add, res2_col
+                with st.spinner("正在进行对角线联动评估，这可能需要几秒钟时间..."):
+                    current_color_pred = predict_color(base_dict, add_dict)
+                    color_diff = np.linalg.norm(np.array(current_color_pred) - np.array(target))
                     
-                error3 = np.abs(np.array(best_color3) - np.array(target3))
-                
-                st.markdown("---")
-                st.markdown("### 🏆 智能极优配料推导结果")
-                
-                c1, c2, c3 = st.columns(3)
-                c1.metric("预测最终 深浅", f"{best_color3[0]:.2f}", f"偏离 {error3[0]:.2f}", delta_color="off")
-                c2.metric("预测最终 红蓝", f"{best_color3[1]:.2f}", f"偏离 {error3[1]:.2f}", delta_color="off")
-                c3.metric("预测最终 黄绿", f"{best_color3[2]:.2f}", f"偏离 {error3[2]:.2f}", delta_color="off")
-                
-                st.write("")
-                with st.container(border=True):
-                    st.markdown("#### ✨ 推荐使用的配料组合 (≤5种)")
-                    if not best_add3:
-                        st.write("当前底料已非常接近目标颜色，不需要添加任何配料。")
+                    lock_types = False
+                    if color_diff <= 1.0:
+                        st.info(f"🔍 **[评估]** 当前初始配方与目标颜色的色差预测为 **{color_diff:.2f} (≤ 1.0)**\n\n**[策略]** 触发锁定模式：仅在【原配料基础】上微调数量，不引入新配料，不剔除旧配料。")
+                        lock_types = True
                     else:
-                        st.dataframe(dict_to_dataframe(best_add3, col_name="需添加的克数"), hide_index=True, use_container_width=True)
-                        add_str_new3 = ','.join([f"{k}:{v:g}" for k,v in best_add3.items()])
-                        st.text_input("🔗 复制推导配料代码:", value=add_str_new3, key="t3_copy")
+                        st.warning(f"🔍 **[评估]** 当前初始配方与目标颜色的色差预测为 **{color_diff:.2f} (> 1.0)**\n\n**[策略]** 允许引入新配料或剔除无效配料，进行全局增量优化。")
+                    
+                    best_add, best_color = optimize_additives_high_precision(
+                        target, base_dict, add_dict, max_additives=5, allow_type_change=True, lock_types=lock_types
+                    )
+                    increments = compute_increments(add_dict, best_add)
+                    error = np.abs(np.array(best_color) - np.array(target))
+                    
+                    st.markdown("---")
+                    st.markdown("### 🏆 优化结果 (高精矩阵版)")
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("最终预测 深浅", f"{best_color[0]:.2f}", f"偏离 {error[0]:.2f}", delta_color="off")
+                    c2.metric("最终预测 红蓝", f"{best_color[1]:.2f}", f"偏离 {error[1]:.2f}", delta_color="off")
+                    c3.metric("最终预测 黄绿", f"{best_color[2]:.2f}", f"偏离 {error[2]:.2f}", delta_color="off")
+                    st.write("")
 
-# ================= Tab 4: 色值正向预测 =================
+                    rc1, rc2 = st.columns(2)
+                    with rc1:
+                        with st.container(border=True):
+                            st.markdown("#### 📝 建议的【最终配料用量】")
+                            if not best_add:
+                                st.write("无需任何配料")
+                            else:
+                                st.dataframe(dict_to_dataframe(best_add, col_name="目标克数"), hide_index=True, use_container_width=True)
+                                
+                            add_str_new = ','.join([f"{k}:{v:g}" for k,v in best_add.items()])
+                            st.text_input("🔗 可直接复制的最终配料字符串:", value=add_str_new, key="t2_copy")
+                            
+                    with rc2:
+                        with st.container(border=True):
+                            st.markdown("#### 🛠 需要【额外操作的动作】")
+                            if not increments:
+                                st.markdown("<div class='success-text'>🎉 保持当前配料不变</div>", unsafe_allow_html=True)
+                            else:
+                                for a, inc in increments.items():
+                                    if inc > 0:
+                                        if a not in add_dict:
+                                            st.markdown(f"<div class='success-text'>➕ <b>{a}</b>: 增加 {inc:g} (新增配料)</div>", unsafe_allow_html=True)
+                                        else:
+                                            st.markdown(f"<div class='success-text'>📈 <b>{a}</b>: 增加 {inc:g}</div>", unsafe_allow_html=True)
+                                    elif inc < 0:
+                                        if best_add.get(a, 0) == 0:
+                                            st.markdown(f"<div class='error-text'>❌ <b>{a}</b>: 减少 {-inc:g} (完全剔除)</div>", unsafe_allow_html=True)
+                                        else:
+                                            st.markdown(f"<div class='warning-text'>📉 <b>{a}</b>: 减少 {-inc:g}</div>", unsafe_allow_html=True)
+
+# ================= Tab 4: 全新配方推导 =================
 with tab4:
-    st.markdown("### 已知底料和配料参数，正向预测它的实际呈现色值")
-    with st.container(border=True):
-        base_str4 = st.text_input("📦 请输入底料 (如: 三色:1475, 中灰:525)", placeholder="必填，用逗号隔开", key="t4_base")
-        add_str4 = st.text_input("🧪 请输入配料 (如: R03:0.15, 9010:20)", placeholder="如果没有配料，可留空", key="t4_add")
-        
-        btn_pred_color = st.button("🔮 物理反射率正向预测", type="primary", use_container_width=True, key="t4_btn")
-        
-    if btn_pred_color:
-        if not base_str4:
-            st.error("底料部分必须填写哦！")
-        else:
-            base_dict4 = parse_dict_from_string(base_str4)
-            add_dict4 = parse_dict_from_string(add_str4)
+    if not ms['is_loaded']:
+        render_model_block_alert()
+    else:
+        st.markdown("### 🪄 给出已知底料与目标颜色，让 AI 从零推导所需配料")
+        with st.container(border=True):
+            base_str3 = st.text_input("📦 请输入底料 (如: 三色:1475, 中灰:525)", placeholder="必填，用逗号隔开", key="t3_base")
             
-            with st.spinner("AI 神经网络正在运算光照与物理反射率..."):
-                pred_col = predict_color(base_dict4, add_dict4)
+            st.write("🎯 设定目标颜色：")
+            col1, col2, col3 = st.columns(3)
+            with col1: t3_d = st.number_input("目标深浅", value=48.4, step=0.1, key="t3_d")
+            with col2: t3_rb = st.number_input("目标红蓝", value=5.61, step=0.1, key="t3_rb")
+            with col3: t3_yg = st.number_input("目标黄绿", value=8.47, step=0.1, key="t3_yg")
+            
+            btn_pred_add = st.button("🪄 一键推导极优配料 (深度双向搜索)", type="primary", use_container_width=True, key="t3_btn")
+        
+        if btn_pred_add:
+            if not base_str3:
+                st.error("请输入底层材料组合！")
+            else:
+                base_dict3 = parse_dict_from_string(base_str3)
+                target3 = (t3_d, t3_rb, t3_yg)
                 
-                st.markdown("---")
-                st.markdown("### 📊 颜色预测报告")
-                st.write("根据您的原材料绝对用量，AI预测该配方干燥后的呈现色值如下：")
+                with st.spinner("系统正在进行双通道并发寻优，无视常识枷锁逼近极致误差..."):
+                    guess1 = predict_new_additives(target3, base_dict3, max_additives=5)
+                    res1_add, res1_col = optimize_additives_high_precision(
+                        target3, base_dict3, guess1, max_additives=5, allow_type_change=True, lock_types=False, apply_penalty=False
+                    )
+                    err1 = calc_weighted_error(res1_col, target3)
+                    
+                    res2_add, res2_col = optimize_additives_high_precision(
+                        target3, base_dict3, {}, max_additives=5, allow_type_change=True, lock_types=False, apply_penalty=False
+                    )
+                    err2 = calc_weighted_error(res2_col, target3)
+                    
+                    if err1 <= err2: best_add3, best_color3 = res1_add, res1_col
+                    else: best_add3, best_color3 = res2_add, res2_col
+                        
+                    error3 = np.abs(np.array(best_color3) - np.array(target3))
+                    
+                    st.markdown("---")
+                    st.markdown("### 🏆 智能极优配料推导结果")
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("预测最终 深浅", f"{best_color3[0]:.2f}", f"偏离 {error3[0]:.2f}", delta_color="off")
+                    c2.metric("预测最终 红蓝", f"{best_color3[1]:.2f}", f"偏离 {error3[1]:.2f}", delta_color="off")
+                    c3.metric("预测最终 黄绿", f"{best_color3[2]:.2f}", f"偏离 {error3[2]:.2f}", delta_color="off")
+                    
+                    st.write("")
+                    with st.container(border=True):
+                        st.markdown("#### ✨ 推荐使用的配料组合 (≤5种)")
+                        if not best_add3:
+                            st.write("当前底料已非常接近目标颜色，不需要添加任何配料。")
+                        else:
+                            st.dataframe(dict_to_dataframe(best_add3, col_name="需添加的克数"), hide_index=True, use_container_width=True)
+                            add_str_new3 = ','.join([f"{k}:{v:g}" for k,v in best_add3.items()])
+                            st.text_input("🔗 复制推导配料代码:", value=add_str_new3, key="t3_copy")
+
+# ================= Tab 5: 色值正向预测 =================
+with tab5:
+    if not ms['is_loaded']:
+        render_model_block_alert()
+    else:
+        st.markdown("### 🔮 已知底料和配料参数，正向预测它的实际呈现色值")
+        with st.container(border=True):
+            base_str4 = st.text_input("📦 请输入底料 (如: 三色:1475, 中灰:525)", placeholder="必填，用逗号隔开", key="t4_base")
+            add_str4 = st.text_input("🧪 请输入配料 (如: R03:0.15, 9010:20)", placeholder="如果没有配料，可留空", key="t4_add")
+            
+            btn_pred_color = st.button("🔮 物理反射率正向预测", type="primary", use_container_width=True, key="t4_btn")
+            
+        if btn_pred_color:
+            if not base_str4:
+                st.error("底料部分必须填写哦！")
+            else:
+                base_dict4 = parse_dict_from_string(base_str4)
+                add_dict4 = parse_dict_from_string(add_str4)
                 
-                c1, c2, c3 = st.columns(3)
-                c1.metric("🌑 预测 深浅", f"{pred_col[0]:.3f}")
-                c2.metric("🔴 预测 红蓝", f"{pred_col[1]:.3f}")
-                c3.metric("🟢 预测 黄绿", f"{pred_col[2]:.3f}")
+                with st.spinner("AI 神经网络正在运算光照与物理反射率..."):
+                    pred_col = predict_color(base_dict4, add_dict4)
+                    
+                    st.markdown("---")
+                    st.markdown("### 📊 颜色预测报告")
+                    st.write("根据您的原材料绝对用量，AI预测该配方干燥后的呈现色值如下：")
+                    
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("🌑 预测 深浅", f"{pred_col[0]:.3f}")
+                    c2.metric("🔴 预测 红蓝", f"{pred_col[1]:.3f}")
+                    c3.metric("🟢 预测 黄绿", f"{pred_col[2]:.3f}")
