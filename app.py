@@ -37,10 +37,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ==================== 2. 全局常量 ====================
+# ==================== 2. 全局常量 (支持直接从GitHub读取) ====================
 MODEL_FILE_PATH = "smart_color_models.pkl"
 DATA_FILE_PATH = "processed_2.xlsx"
 MODEL_DOWNLOAD_URL = "https://github.com/jyj-0103/muli/releases/download/model2/smart_color_models.pkl"
+
+# 注意：为了让程序能够下载真实的 Excel 文件而不是网页，必须使用 raw.githubusercontent.com 格式
+DATA_DOWNLOAD_URL = "https://raw.githubusercontent.com/jyj-0103/muli/master/processed_2.xlsx"
 
 # ==================== 3. 纯原生：多用户与审核系统 ====================
 USER_DB_FILE = "users_db.json"
@@ -171,12 +174,17 @@ def dict_to_dataframe(d, col_name="用量"):
     df[col_name] = df[col_name].apply(lambda x: f"{x:g}")
     return df
 
-# ==================== 5. ★ 纯原生 Excel 极速解析 (无需 AI 模型) ★ ====================
+# ==================== 5. ★ 纯原生 Excel 极速解析 (包含云端拉取) ★ ====================
 @st.cache_data(show_spinner=False)
 def load_raw_recipes_from_excel(file_path):
-    """直接解析 Excel，提供给极速检索功能，完全不依赖机器学习库"""
+    """直接解析 Excel，提供给极速检索功能，完全不依赖机器学习库。若无文件自动去GitHub下载。"""
     if not os.path.exists(file_path):
-        return None
+        try:
+            # 如果本地没找到 Excel，尝试从 GitHub 自动拉取
+            urllib.request.urlretrieve(DATA_DOWNLOAD_URL, file_path)
+        except Exception:
+            return None
+            
     try:
         df = pd.read_excel(file_path, sheet_name=0)
         df.columns = df.columns.str.strip()
@@ -260,7 +268,7 @@ ms = get_model_state()
 def train_and_save_models():
     # 强制重新读取 Excel 以供 AI 训练
     raw_data = load_raw_recipes_from_excel(DATA_FILE_PATH)
-    if not raw_data: return False, f"找不到数据文件或格式错误: {DATA_FILE_PATH}"
+    if not raw_data: return False, f"找不到数据文件或格式错误: {DATA_FILE_PATH}。尝试点击【从云端同步最新 Excel 数据】。"
     
     ms['recipes'] = raw_data
     
@@ -669,25 +677,36 @@ with st.sidebar:
                     st.success(f"✅ 已成功将账号 **[{user_to_reset}]** 的密码强制重置！")
 
         st.write("")
-        st.markdown("#### ⚙️ AI 模型核心管理")
+        st.markdown("#### ⚙️ 数据与模型管理")
         with st.container(border=True):
-            if st.button("📂 启动/加载本地模型", use_container_width=True):
+            
+            if st.button("📥 从云端同步最新 Excel 数据", use_container_width=True):
+                with st.spinner("正在从 GitHub 下载最新数据文件..."):
+                    try:
+                        urllib.request.urlretrieve(DATA_DOWNLOAD_URL, DATA_FILE_PATH)
+                        load_raw_recipes_from_excel.clear() # 清除缓存，确保下次读取最新数据
+                        st.success("✅ Excel 数据已更新！您可以去体验 [极速查历史]，或重新训练模型。")
+                    except Exception as e:
+                        st.error(f"❌ 数据拉取失败: {e}")
+                        
+            st.write("")
+            if st.button("📂 启动/加载本地 AI 大模型", use_container_width=True):
                 with st.spinner("正在加载模型..."):
                     success, msg = load_models()
                     if success: st.success(msg)
                     else: st.error(msg)
             
             st.write("")
-            if st.button("📥 从云端强制拉取大模型", type="primary", use_container_width=True):
+            if st.button("📥 从云端强制拉取 AI 大模型", type="primary", use_container_width=True):
                 with st.spinner("🚀 正在下载 AI 大模型 (约 250MB)，请耐心等待..."):
                     try:
                         urllib.request.urlretrieve(MODEL_DOWNLOAD_URL, MODEL_FILE_PATH)
-                        st.success("✅ 云端模型拉取成功！现在可以点击上方的【加载本地模型】了。")
+                        st.success("✅ 云端模型拉取成功！现在可以点击上方的【启动/加载本地 AI 大模型】了。")
                     except Exception as e:
                         st.error(f"❌ 下载模型失败，请检查链接或仓库权限: {e}")
 
             st.write("")
-            if st.button("🚀 根据本地 Excel 重新训练", type="secondary", use_container_width=True):
+            if st.button("🚀 根据本地 Excel 重新训练模型", type="secondary", use_container_width=True):
                 with st.spinner("正在重新训练..."):
                     success, msg = train_and_save_models()
                     if success: st.success(msg)
@@ -696,10 +715,10 @@ with st.sidebar:
     st.markdown("---")
     st.image("https://cdn-icons-png.flaticon.com/512/3003/3003054.png", width=60)
     if ms['is_loaded']:
-        st.success("🟢 核心大模型已就绪")
+        st.success("🟢 AI 大模型已就绪")
         st.caption("🔥 高精推演引擎运转中，可随时使用全部功能。")
     else: 
-        st.warning("🔴 模型尚未启动或未部署")
+        st.warning("🔴 AI 模型尚未启动")
 
 
 # ==================== 8. 主界面业务 Tabs ====================
@@ -729,7 +748,7 @@ with tab1:
         fast_results = search_history_direct_fast(target_d_fast, target_rb_fast, target_yg_fast, k=5)
         
         if fast_results is None:
-            st.error(f"❌ 找不到数据文件 `{DATA_FILE_PATH}`！请确保数据源文件与代码在同一文件夹内。")
+            st.error(f"❌ 找不到数据文件！系统未能成功从云端下载 `processed_2.xlsx`。如果您是管理员，请在左侧侧边栏点击【从云端同步最新 Excel 数据】尝试重试。")
         elif len(fast_results) == 0:
             st.warning("未匹配到任何有效的历史配方数据，请检查 Excel 格式是否正确。")
         else:
@@ -767,7 +786,7 @@ def render_model_block_alert():
     st.markdown("<br>", unsafe_allow_html=True)
     st.error("⚠️ **系统拦截：AI 核心大模型当前尚未启动！**")
     if st.session_state["is_admin"]:
-        st.info("👈 **管理员提示：** 请在左侧侧边栏【AI 模型核心管理】区域点击 **[启动/加载本地模型]**。")
+        st.info("👈 **管理员提示：** 请在左侧侧边栏【AI 模型核心管理】区域点击 **[启动/加载本地 AI 大模型]**。如果未下载过模型，请先点击【从云端强制拉取】。")
     else:
         st.info("请联系管理员登录后台进行模型初始化部署，或者稍后再试。")
 
